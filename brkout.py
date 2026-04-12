@@ -15,36 +15,46 @@ import threading
 import requests
 warnings.filterwarnings('ignore')
 
-# --- THE ULTIMATE HIDE (NO LOGOS, NO LINKS) ---
+# --- THE ULTIMATE HIDE (FORCE REMOVAL) ---
 st.markdown("""
     <style>
-        /* Hide the top header and the GitHub icon */
-        header {visibility: hidden !important;}
-        [data-testid="stHeader"] {display: none !important;}
-        
-        /* Hide the entire footer area (Hosted by Streamlit) */
-        footer {visibility: hidden !important;}
-        [data-testid="stFooter"] {display: none !important;}
-        
-        /* Hide the 3-dots menu and any toolbars */
-        #MainMenu {visibility: hidden !important;}
-        [data-testid="stToolbar"] {visibility: hidden !important;}
-        
-        /* Hide the 'Deploy' button and GitHub 'Fork' badge */
-        .stAppDeployButton {display: none !important;}
-        .viewerBadge_container__1QSob {display: none !important;}
-        
-        /* This removes the 'hosted by' text specifically */
-        div[class^="viewerBadge_link"] {display: none !important;}
-        div[class^="viewerBadge_container"] {display: none !important;}
-        
-        /* Remove extra white space at the top */
-        .st-emotion-cache-18ni7ap {padding-top: 0rem !important;}
-        .st-emotion-cache-z5fcl4 {padding-top: 0rem !important;}
-        
-        /* Hide any hidden link overlays */
-        a[href*="streamlit.io"] {display: none !important;}
-        a[href*="github.com"] {display: none !important;}
+        /* 1. Hide the top header, the GitHub icon, and the 3-dots menu */
+        [data-testid="stHeader"], 
+        header, 
+        .st-emotion-cache-18ni7ap, 
+        .st-emotion-cache-z5fcl4 {
+            visibility: hidden !important;
+            height: 0 !important;
+            display: none !important;
+        }
+
+        /* 2. Hide the entire footer (Hosted by Streamlit) */
+        footer, 
+        [data-testid="stFooter"], 
+        .st-emotion-cache-1kyf6b1 {
+            visibility: hidden !important;
+            display: none !important;
+        }
+
+        /* 3. Hide the GitHub 'Fork' badge and 'Deploy' button specifically */
+        .viewerBadge_container__1QSob, 
+        .stAppDeployButton, 
+        [data-testid="stStatusWidget"] {
+            display: none !important;
+            visibility: hidden !important;
+        }
+
+        /* 4. This is a special 'Catch-All' for any remaining links at the bottom */
+        div[class*="viewerBadge"], 
+        div[class*="StyledLink"] {
+            display: none !important;
+        }
+
+        /* 5. Clean up the extra space created by hiding headers */
+        .main .block-container {
+            padding-top: 1rem !important;
+            padding-bottom: 0rem !important;
+        }
     </style>
     """, unsafe_allow_html=True)
 # Apply nest_asyncio to allow multiple asyncio runs
