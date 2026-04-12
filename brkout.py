@@ -15,47 +15,21 @@ import threading
 import requests
 warnings.filterwarnings('ignore')
 
-# --- SUPER HIDE EVERYTHING ---
-st.markdown("""
+# Hide Streamlit's default UI elements
+
+hide_streamlit_style = """
+
     <style>
-        /* Hide everything at the top */
-        header, [data-testid="stHeader"] {
-            display: none !important;
-        }
-        
-        /* Hide everything at the bottom */
-        footer, [data-testid="stFooter"] {
-            display: none !important;
-        }
-        
-        /* Hide the Main Menu (3 dots) */
-        #MainMenu {
-            visibility: hidden !important;
-        }
 
-        /* Hide the status widget (the running man/loading icon) */
-        [data-testid="stStatusWidget"] {
-            visibility: hidden !important;
-            display: none !important;
-        }
+    #MainMenu {visibility: hidden;}
 
-        /* Hide the 'Deploy' and 'GitHub' buttons */
-        .stAppDeployButton, .viewerBadge_container__1QSob {
-            display: none !important;
-        }
+    footer {visibility: hidden;}
 
-        /* Hide the toolbar that appears on hover */
-        [data-testid="stToolbar"] {
-            display: none !important;
-        }
-        
-        /* This removes the extra space created by hiding the header */
-        .st-emotion-cache-18ni7ap {
-            padding-top: 0rem !important;
-        }
     </style>
-    """, unsafe_allow_html=True)
 
+    """
+
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 # Apply nest_asyncio to allow multiple asyncio runs
 nest_asyncio.apply()
 
