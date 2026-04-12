@@ -15,45 +15,40 @@ import threading
 import requests
 warnings.filterwarnings('ignore')
 
-# --- THE ULTIMATE HIDE (FORCE REMOVAL) ---
+# --- REMOVE ALL STREAMLIT & GITHUB BRANDING ---
 st.markdown("""
     <style>
-        /* 1. Hide the top header, the GitHub icon, and the 3-dots menu */
-        [data-testid="stHeader"], 
-        header, 
-        .st-emotion-cache-18ni7ap, 
-        .st-emotion-cache-z5fcl4 {
-            visibility: hidden !important;
-            height: 0 !important;
+        /* 1. Remove the header entirely */
+        [data-testid="stHeader"] {
             display: none !important;
         }
 
-        /* 2. Hide the entire footer (Hosted by Streamlit) */
-        footer, 
-        [data-testid="stFooter"], 
-        .st-emotion-cache-1kyf6b1 {
-            visibility: hidden !important;
+        /* 2. Remove the footer and any branding links */
+        [data-testid="stFooter"], footer {
             display: none !important;
         }
 
-        /* 3. Hide the GitHub 'Fork' badge and 'Deploy' button specifically */
+        /* 3. Remove the GitHub/Deploy toolbar in the top right */
+        [data-testid="stToolbar"] {
+            display: none !important;
+        }
+
+        /* 4. Remove the 'Made with Streamlit' and GitHub badges specifically */
         .viewerBadge_container__1QSob, 
-        .stAppDeployButton, 
+        .stAppDeployButton,
+        div[class*="viewerBadge"] {
+            display: none !important;
+        }
+
+        /* 5. Force the main content to fill the empty space */
+        .main .block-container {
+            padding-top: 2rem !important;
+            padding-bottom: 0rem !important;
+        }
+
+        /* 6. Remove the 'Running...' man icon to keep it clean */
         [data-testid="stStatusWidget"] {
             display: none !important;
-            visibility: hidden !important;
-        }
-
-        /* 4. This is a special 'Catch-All' for any remaining links at the bottom */
-        div[class*="viewerBadge"], 
-        div[class*="StyledLink"] {
-            display: none !important;
-        }
-
-        /* 5. Clean up the extra space created by hiding headers */
-        .main .block-container {
-            padding-top: 1rem !important;
-            padding-bottom: 0rem !important;
         }
     </style>
     """, unsafe_allow_html=True)
