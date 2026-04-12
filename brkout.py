@@ -15,47 +15,38 @@ import threading
 import requests
 warnings.filterwarnings('ignore')
 
-# --- SUPER HIDE EVERYTHING ---
+# --- THE ULTIMATE HIDE (NO LOGOS, NO LINKS) ---
 st.markdown("""
     <style>
-        /* Hide everything at the top */
-        header, [data-testid="stHeader"] {
-            display: none !important;
-        }
+        /* Hide the top header and the GitHub icon */
+        header {visibility: hidden !important;}
+        [data-testid="stHeader"] {display: none !important;}
         
-        /* Hide everything at the bottom */
-        footer, [data-testid="stFooter"] {
-            display: none !important;
-        }
+        /* Hide the entire footer area (Hosted by Streamlit) */
+        footer {visibility: hidden !important;}
+        [data-testid="stFooter"] {display: none !important;}
         
-        /* Hide the Main Menu (3 dots) */
-        #MainMenu {
-            visibility: hidden !important;
-        }
-
-        /* Hide the status widget (the running man/loading icon) */
-        [data-testid="stStatusWidget"] {
-            visibility: hidden !important;
-            display: none !important;
-        }
-
-        /* Hide the 'Deploy' and 'GitHub' buttons */
-        .stAppDeployButton, .viewerBadge_container__1QSob {
-            display: none !important;
-        }
-
-        /* Hide the toolbar that appears on hover */
-        [data-testid="stToolbar"] {
-            display: none !important;
-        }
+        /* Hide the 3-dots menu and any toolbars */
+        #MainMenu {visibility: hidden !important;}
+        [data-testid="stToolbar"] {visibility: hidden !important;}
         
-        /* This removes the extra space created by hiding the header */
-        .st-emotion-cache-18ni7ap {
-            padding-top: 0rem !important;
-        }
+        /* Hide the 'Deploy' button and GitHub 'Fork' badge */
+        .stAppDeployButton {display: none !important;}
+        .viewerBadge_container__1QSob {display: none !important;}
+        
+        /* This removes the 'hosted by' text specifically */
+        div[class^="viewerBadge_link"] {display: none !important;}
+        div[class^="viewerBadge_container"] {display: none !important;}
+        
+        /* Remove extra white space at the top */
+        .st-emotion-cache-18ni7ap {padding-top: 0rem !important;}
+        .st-emotion-cache-z5fcl4 {padding-top: 0rem !important;}
+        
+        /* Hide any hidden link overlays */
+        a[href*="streamlit.io"] {display: none !important;}
+        a[href*="github.com"] {display: none !important;}
     </style>
     """, unsafe_allow_html=True)
-
 # Apply nest_asyncio to allow multiple asyncio runs
 nest_asyncio.apply()
 
