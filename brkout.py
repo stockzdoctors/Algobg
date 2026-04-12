@@ -12,7 +12,7 @@ import nest_asyncio
 from telegram import Bot
 from telegram.error import TelegramError
 import threading
-
+import requests
 warnings.filterwarnings('ignore')
 
 # Apply nest_asyncio to allow multiple asyncio runs
@@ -80,14 +80,20 @@ Always consult registered experts.
 ━━━━━━━━━━━━━━━━━━"""
 
 def send_telegram_message_sync(message):
-    """Send Telegram message synchronously"""
+    """Send Telegram message using simple HTTP Request (More stable for Cloud)"""
     try:
-        loop.run_until_complete(telegram_bot.send_message(
-            chat_id=TELEGRAM_CHAT_ID,
-            text=message,
-            parse_mode='Markdown'
-        ))
-        return True
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message,
+            "parse_mode": "Markdown"
+        }
+        response = requests.post(url, data=payload)
+        if response.status_code == 200:
+            return True
+        else:
+            st.error(f"Telegram API Error: {response.text}")
+            return False
     except Exception as e:
         st.error(f"Failed to send Telegram alert: {str(e)}")
         return False
