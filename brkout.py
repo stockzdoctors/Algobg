@@ -12,8 +12,9 @@ import nest_asyncio
 nest_asyncio.apply()
 
 # --- SECRETS CONFIGURATION ---
-TOKEN = st.secrets["8259489232:AAH_1aZRNl_0dnJe_ZRA4g3TM9Pj53F148E"]
-CHAT_ID = st.secrets["-1002955746386"]
+# --- SECRETS CONFIGURATION ---
+TOKEN = st.secrets["TELEGRAM_TOKEN"]
+CHAT_ID = st.secrets["TELEGRAM_CHAT_ID"]
 SYMBOLS = ["BANKNIFTY", "NIFTY", "RELIANCE", "INFY", "HDFCBANK", "TCS", "ICICIBANK"]
 
 # Initialize Telegram
