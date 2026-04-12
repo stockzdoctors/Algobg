@@ -903,7 +903,7 @@ def display_signals_table(signals, title="Trading Signals"):
             return 'background-color: #ff0000; color: white; font-weight: bold'
         return ''
     
-    styled_df = df_display.style.applymap(color_signal, subset=['SIGNAL'])
+    styled_df = df_display.style.map(color_signal, subset=['SIGNAL'])
     
     st.dataframe(
         styled_df,
