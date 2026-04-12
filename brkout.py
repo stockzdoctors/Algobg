@@ -15,6 +15,20 @@ import threading
 import requests
 warnings.filterwarnings('ignore')
 
+# --- HIDE STREAMLIT STYLE ELEMENTS ---
+hide_st_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            footer {visibility: hidden;}
+            header {visibility: hidden;}
+            #stDecoration {display:none;}
+            [data-testid="stStatusWidget"] {display:none;}
+            .stAppDeployButton {display:none;}
+            [data-testid="stToolbar"] {visibility: hidden !important;}
+            </style>
+            """
+st.markdown(hide_st_style, unsafe_allow_html=True)
+
 # Apply nest_asyncio to allow multiple asyncio runs
 nest_asyncio.apply()
 
