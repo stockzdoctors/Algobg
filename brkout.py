@@ -15,19 +15,26 @@ import threading
 import requests
 warnings.filterwarnings('ignore')
 
-# --- HIDE STREAMLIT STYLE ELEMENTS ---
-hide_st_style = """
-            <style>
-            #MainMenu {visibility: hidden;}
-            footer {visibility: hidden;}
-            header {visibility: hidden;}
-            #stDecoration {display:none;}
-            [data-testid="stStatusWidget"] {display:none;}
-            .stAppDeployButton {display:none;}
-            [data-testid="stToolbar"] {visibility: hidden !important;}
-            </style>
-            """
-st.markdown(hide_st_style, unsafe_allow_html=True)
+# --- TOTAL HIDE CUSTOM CSS ---
+st.markdown("""
+    <style>
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header {visibility: hidden;}
+        #stDecoration {display:none;}
+        [data-testid="stStatusWidget"] {display:none;}
+        .stAppDeployButton {display:none;}
+        [data-testid="stToolbar"] {visibility: hidden !important;}
+        
+        /* This part hides the bottom-left "Hosted with Streamlit" link */
+        div[data-testid="stFooter"] {display: none !important;}
+        [data-testid="stHeader"] {display: none !important;}
+        
+        /* This hides the "Fork on GitHub" and other link decorations */
+        .viewerBadge_container__1QSob {display: none !important;}
+        .viewerBadge_link__3_67y {display: none !important;}
+    </style>
+    """, unsafe_allow_html=True)
 
 # Apply nest_asyncio to allow multiple asyncio runs
 nest_asyncio.apply()
