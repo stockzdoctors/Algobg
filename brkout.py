@@ -15,24 +15,44 @@ import threading
 import requests
 warnings.filterwarnings('ignore')
 
-# --- TOTAL HIDE CUSTOM CSS ---
+# --- SUPER HIDE EVERYTHING ---
 st.markdown("""
     <style>
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
-        header {visibility: hidden;}
-        #stDecoration {display:none;}
-        [data-testid="stStatusWidget"] {display:none;}
-        .stAppDeployButton {display:none;}
-        [data-testid="stToolbar"] {visibility: hidden !important;}
+        /* Hide everything at the top */
+        header, [data-testid="stHeader"] {
+            display: none !important;
+        }
         
-        /* This part hides the bottom-left "Hosted with Streamlit" link */
-        div[data-testid="stFooter"] {display: none !important;}
-        [data-testid="stHeader"] {display: none !important;}
+        /* Hide everything at the bottom */
+        footer, [data-testid="stFooter"] {
+            display: none !important;
+        }
         
-        /* This hides the "Fork on GitHub" and other link decorations */
-        .viewerBadge_container__1QSob {display: none !important;}
-        .viewerBadge_link__3_67y {display: none !important;}
+        /* Hide the Main Menu (3 dots) */
+        #MainMenu {
+            visibility: hidden !important;
+        }
+
+        /* Hide the status widget (the running man/loading icon) */
+        [data-testid="stStatusWidget"] {
+            visibility: hidden !important;
+            display: none !important;
+        }
+
+        /* Hide the 'Deploy' and 'GitHub' buttons */
+        .stAppDeployButton, .viewerBadge_container__1QSob {
+            display: none !important;
+        }
+
+        /* Hide the toolbar that appears on hover */
+        [data-testid="stToolbar"] {
+            display: none !important;
+        }
+        
+        /* This removes the extra space created by hiding the header */
+        .st-emotion-cache-18ni7ap {
+            padding-top: 0rem !important;
+        }
     </style>
     """, unsafe_allow_html=True)
 
