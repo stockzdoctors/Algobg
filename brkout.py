@@ -119,7 +119,7 @@ def get_nifty200_filtered_gainers():
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.9",
             "Accept-Encoding": "gzip, deflate, br",
-            "Referer": "https://www.nseindia.com/market-data/live-equity-market"
+            "Referer": "https ://www.nseindia.com/index-tracker/NIFTY%20100"
         }
         session = requests.Session()
         # First visit the home page to get the necessary cookies
