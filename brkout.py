@@ -263,25 +263,17 @@ class CandleBreakoutStrategy:
             
         signals = []
         df.index = pd.to_datetime(df.index)
-
-        # --- FIX: FORCE DETECT TODAY'S DATE ---
         today_date = datetime.now().date()
         
-        # Find the 9:15 reference candle specifically for TODAY
-        reference_candle = None
-        reference_idx = None
+        # Filter only Today's Data
+        today_df = df[df.index.date == today_date]
         
-        for i in range(len(df)):
-            time_val = df.index[i]
-            # Match Today's Date AND 09:15 Time
-            if time_val.date() == today_date and time_val.strftime('%H:%M') == '09:15':
-                reference_candle = df.iloc[i]
-                reference_idx = i
-                break
-        
-        # If today's 9:15 candle isn't found yet, don't look at old days
-        if reference_candle is None:
+        if len(today_df) < 1:
             return None
+
+        # --- PERSISTENT LOGIC: Find the VERY FIRST candle of today ---
+        reference_candle = today_df.iloc[0]
+        reference_idx = 0
         
         high_915 = round_to_2_decimals(reference_candle['high'])
         low_915 = round_to_2_decimals(reference_candle['low'])
@@ -292,230 +284,137 @@ class CandleBreakoutStrategy:
             if date_tracker.get(key, False):
                 return None
         
-        # PERSISTENT SCAN: Check all candles starting from 9:30 AM until NOW
-        for i in range(reference_idx + 1, len(df)):
-            current_candle = df.iloc[i]
+        # Check every candle from the 2nd candle onwards to find a breakout
+        for i in range(1, len(today_df)):
+            current_candle = today_df.iloc[i]
+            current_high = round_to_2_decimals(current_candle['high'])
+            current_low = round_to_2_decimals(current_candle['low'])
+            current_close = round_to_2_decimals(current_candle['close'])
             
-            # Ensure we only process candles from TODAY
-            if df.index[i].date() != today_date:
-                continue
-
-            current_time_str = df.index[i].strftime('%H:%M')
-            current_time_full = df.index[i].strftime('%H:%M:%S')
-            
-            open_price = round_to_2_decimals(current_candle['open'])
-            high_price = round_to_2_decimals(current_candle['high'])
-            low_price = round_to_2_decimals(current_candle['low'])
-            volume = int(current_candle['volume'])
-            
-            # BUY Condition (If any candle high broke the 9:15 high)
-            if high_price > high_915:
-                # Signal details
-                entry = high_915 # Theoretical entry is the line break
+            # BUY Condition
+            if current_high > high_915:
+                entry = high_915
                 stop_loss = low_915
-                risk_per_share = round_to_2_decimals(entry - stop_loss)
-                
-                if risk_per_share > 0:
-                    quantity = int(self.risk_amount / risk_per_share)
-                    if quantity > 0:
-                        signal = {
-                            'DATE': date_str, 'ENTRY_TIME': current_time_full,
-                            'BREAKOUT_CANDLE': current_time_str, 'SYMBOL': symbol,
-                            'SIGNAL': 'BUY', 'ENTRY': entry, 'QUANTITY': quantity,
-                            'STOPLOSS': stop_loss, 'T1': round_to_2_decimals(entry + risk_per_share),
-                            'T2': round_to_2_decimals(entry + risk_per_share * 2),
-                            'T3': round_to_2_decimals(entry + risk_per_share * 3),
-                            'VOLUME': volume, 'T1_HIT': False, 'T2_HIT': False, 'T3_HIT': False
-                        }
-                        if date_tracker is not None:
-                            date_tracker[key] = True
-                        signals.append(signal)
-                        break
-                        
-            # SELL Condition (If any candle low broke the 9:15 low)
-            elif low_price < low_915:
+                risk = round_to_2_decimals(entry - stop_loss)
+                if risk > 0:
+                    quantity = int(self.risk_amount / risk)
+                    signal = {
+                        'DATE': date_str, 'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'),
+                        'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 'SYMBOL': symbol,
+                        'SIGNAL': 'BUY', 'ENTRY': entry, 'QUANTITY': quantity,
+                        'STOPLOSS': stop_loss, 'T1': round_to_2_decimals(entry + risk),
+                        'T2': round_to_2_decimals(entry + risk * 2), 'T3': round_to_2_decimals(entry + risk * 3),
+                        'VOLUME': int(current_candle['volume']), 'T1_HIT': False, 'T2_HIT': False, 'T3_HIT': False
+                    }
+                    if date_tracker is not None: date_tracker[key] = True
+                    signals.append(signal)
+                    break
+            
+            # SELL Condition
+            elif current_low < low_915:
                 entry = low_915
                 stop_loss = high_915
-                risk_per_share = round_to_2_decimals(stop_loss - entry)
-                
-                if risk_per_share > 0:
-                    quantity = int(self.risk_amount / risk_per_share)
-                    if quantity > 0:
-                        signal = {
-                            'DATE': date_str, 'ENTRY_TIME': current_time_full,
-                            'BREAKOUT_CANDLE': current_time_str, 'SYMBOL': symbol,
-                            'SIGNAL': 'SELL', 'ENTRY': entry, 'QUANTITY': quantity,
-                            'STOPLOSS': stop_loss, 'T1': round_to_2_decimals(entry - risk_per_share),
-                            'T2': round_to_2_decimals(entry - risk_per_share * 2),
-                            'T3': round_to_2_decimals(entry - risk_per_share * 3),
-                            'VOLUME': volume, 'T1_HIT': False, 'T2_HIT': False, 'T3_HIT': False
-                        }
-                        if date_tracker is not None:
-                            date_tracker[key] = True
-                        signals.append(signal)
-                        break
+                risk = round_to_2_decimals(stop_loss - entry)
+                if risk > 0:
+                    quantity = int(self.risk_amount / risk)
+                    signal = {
+                        'DATE': date_str, 'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'),
+                        'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 'SYMBOL': symbol,
+                        'SIGNAL': 'SELL', 'ENTRY': entry, 'QUANTITY': quantity,
+                        'STOPLOSS': stop_loss, 'T1': round_to_2_decimals(entry - risk),
+                        'T2': round_to_2_decimals(entry - risk * 2), 'T3': round_to_2_decimals(entry - risk * 3),
+                        'VOLUME': int(current_candle['volume']), 'T1_HIT': False, 'T2_HIT': False, 'T3_HIT': False
+                    }
+                    if date_tracker is not None: date_tracker[key] = True
+                    signals.append(signal)
+                    break
         return signals
 
 class MovingAverageCrossStrategy:
-    """Strategy 2: Moving Average Crossover Strategy"""
     def __init__(self, timeframe='15min', fast_ma=9, slow_ma=21, risk_amount=10000, mode="Live Trading"):
         self.timeframe, self.fast_ma, self.slow_ma, self.risk_amount, self.mode = timeframe, fast_ma, slow_ma, risk_amount, mode
-        self.name = f"MA Crossover ({fast_ma}/{slow_ma})"
     def analyze(self, df, symbol, date_tracker=None):
         return None
 
 class RSIBreakoutStrategy:
-    """Strategy 3: RSI + Breakout Strategy"""
     def __init__(self, timeframe='15min', rsi_period=14, risk_amount=10000, mode="Live Trading"):
         self.timeframe, self.rsi_period, self.risk_amount, self.mode = timeframe, rsi_period, risk_amount, mode
-        self.name = f"RSI Breakout ({rsi_period})"
     def analyze(self, df, symbol, date_tracker=None):
         return None
 
 def fetch_data(symbol, interval, n_bars=100):
-    """Fetch historical data from TradingView"""
     try:
         tv = TvDatafeed()
-        interval_map = {'5min': Interval.in_5_minute, '15min': Interval.in_15_minute, '30min': Interval.in_30_minute, '45min': Interval.in_45_minute, '1h': Interval.in_1_hour, 'daily': Interval.in_daily}
-        tv_interval = interval_map.get(interval, Interval.in_15_minute)
-        return tv.get_hist(symbol=symbol, exchange="NSE", interval=tv_interval, n_bars=n_bars, extended_session=False)
-    except Exception as e:
-        st.error(f"Error fetching data for {symbol}: {str(e)}")
-        return None
-
-def get_last_n_market_days(n=2):
-    market_days = []
-    current_date = datetime.now()
-    while len(market_days) < n:
-        current_date -= timedelta(days=1)
-        if current_date.weekday() < 5: market_days.append(current_date)
-    return market_days
+        inv_map = {'5min': Interval.in_5_minute, '15min': Interval.in_15_minute, 'daily': Interval.in_daily}
+        return tv.get_hist(symbol=symbol, exchange="NSE", interval=inv_map.get(interval, Interval.in_15_minute), n_bars=n_bars)
+    except: return None
 
 def check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amount, mode, existing_signals, **strategy_params):
     all_new_signals = []
     if strategy_name == "Candle Breakout Strategy":
         strategy = CandleBreakoutStrategy(timeframe, risk_amount, mode)
-    elif strategy_name == "MA Crossover Strategy":
-        strategy = MovingAverageCrossStrategy(timeframe, strategy_params.get('fast_ma', 9), strategy_params.get('slow_ma', 21), risk_amount, mode)
     else:
-        strategy = RSIBreakoutStrategy(timeframe, strategy_params.get('rsi_period', 14), risk_amount, mode)
+        strategy = CandleBreakoutStrategy(timeframe, risk_amount, mode)
     
     for symbol in selected_symbols:
-        data = fetch_data(symbol, timeframe, n_bars=100)
-        if data is not None and len(data) > 0:
+        data = fetch_data(symbol, timeframe)
+        if data is not None:
             signals = strategy.analyze(data, symbol, st.session_state.signal_count_per_stock)
             if signals: all_new_signals.extend(signals)
     return all_new_signals
 
-def backtest_strategy(selected_symbols, timeframe, strategy_name, start_date, end_date, risk_amount, mode, **strategy_params):
-    return check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amount, mode, [])
-
-def simulate_live_signals(selected_symbols, timeframe, strategy_name, risk_amount, mode, **strategy_params):
-    return check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amount, mode, [])
-
-def monitor_active_trades(current_prices):
-    return []
-
-def get_current_prices(selected_symbols, timeframe):
-    current_prices = {}
-    for symbol in selected_symbols:
-        data = fetch_data(symbol, timeframe, n_bars=5)
-        if data is not None and len(data) > 0:
-            current_prices[symbol] = data['close'].iloc[-1]
-    return current_prices
-
-def display_signals_table(signals, title="Trading Signals"):
-    if not signals:
-        st.info("No signals generated")
-        return None
-    df_signals = pd.DataFrame(signals)
-    styled_df = df_signals.style.map(lambda x: 'background-color: #00ff00; color: black; font-weight: bold' if x == 'BUY' else ('background-color: #ff0000; color: white; font-weight: bold' if x == 'SELL' else ''), subset=['SIGNAL'])
-    st.dataframe(styled_df, use_container_width=True, height=400)
-    return df_signals
-
-def display_active_trades():
-    if st.session_state.active_trades:
-        st.subheader("🟡 Active Trades")
-        st.dataframe(pd.DataFrame(st.session_state.active_trades), use_container_width=True)
-    else:
-        st.info("No active trades")
-
 def run_bot_cycle(selected_symbols, timeframe, strategy, risk_amount, selected_mode, strategy_params, refresh_interval, progress_bar, status_text):
-    current_time = datetime.now()
-    st.session_state.last_check_time = current_time
     st.session_state.refresh_counter += 1
+    st.session_state.last_check_time = datetime.now()
     for i in range(refresh_interval, 0, -1):
         progress_bar.progress((refresh_interval - i) / refresh_interval)
         status_text.text(f"🔄 Next check in {i} seconds... (Cycle: {st.session_state.refresh_counter})")
         time.sleep(1)
-    status_text.text(f"📊 Checking for signals... (Cycle: {st.session_state.refresh_counter})")
     return check_for_new_signals(selected_symbols, timeframe, strategy, risk_amount, selected_mode, st.session_state.signals, **strategy_params)
+
+def display_signals_table(signals, title="Signals"):
+    if signals:
+        df = pd.DataFrame(signals)
+        st.dataframe(df.style.map(lambda x: 'background-color: #00ff00; color: black' if x == 'BUY' else ('background-color: #ff0000; color: white' if x == 'SELL' else ''), subset=['SIGNAL']), use_container_width=True)
 
 def main():
     st.title("📈 Algorithmic Trading System")
     st.markdown("---")
     with st.sidebar:
-        st.header("⚙️ Configuration")
-        selected_mode = st.radio("Select Mode", options=["Live Trading", "Backtest (Last 2 Days)", "Simulation (Market Closed)"], index=0)
-        st.session_state.mode = selected_mode
-        risk_amount = st.number_input("Risk Amount per Trade (₹)", min_value=1000, max_value=1000000, value=10000, step=1000)
-        timeframe = st.selectbox("Select Timeframe", options=['5min', '15min', '30min', '45min', '1h', 'daily'], index=1)
-        strategy = st.selectbox("Select Strategy", options=["Candle Breakout Strategy", "MA Crossover Strategy", "RSI Breakout Strategy"], index=0)
-        strategy_params = {}
-        update_interval = st.slider("Update Interval (seconds)", min_value=5, max_value=60, value=10, step=5)
-        selected_symbols = SYMBOLS
+        selected_mode = st.radio("Select Mode", ["Live Trading", "Backtest (Last 2 Days)"])
+        risk_amount = st.number_input("Risk per Trade", 1000, 1000000, 10000)
+        timeframe = st.selectbox("Timeframe", ['15min', '5min'])
+        strategy = st.selectbox("Strategy", ["Candle Breakout Strategy"])
+        update_interval = st.slider("Update Interval", 5, 60, 10)
         
         if not st.session_state.auto_refresh:
             if st.button("🚀 Start Bot", type="primary", use_container_width=True):
                 st.session_state.auto_refresh = True
                 st.session_state.signals = []
-                st.session_state.active_trades = []
                 st.session_state.refresh_counter = 0
-                send_telegram_message_sync(f"🤖 *Trading Bot Started* 🤖\n\nMode: {selected_mode}\nStrategy: {strategy}")
                 st.rerun()
         else:
-            if st.button("⏹️ Stop Bot", type="secondary", use_container_width=True):
+            if st.button("⏹ Stop Bot", type="secondary", use_container_width=True):
                 st.session_state.auto_refresh = False
-                send_telegram_message_sync("🛑 *Trading Bot Stopped* 🛑")
                 st.rerun()
-        
-        if st.button("🗑️ Clear Signals", use_container_width=True):
-            st.session_state.signals = []
-            st.session_state.active_trades = []
-            st.session_state.signal_count_per_stock = {}
-            st.success("Signals cleared!")
 
-    if selected_mode == "Live Trading":
-        if st.session_state.auto_refresh:
-            col1, col2, col3 = st.columns(3)
-            col1.metric("🔄 Refresh Cycle", st.session_state.refresh_counter)
-            col2.metric("⏰ Last Check", st.session_state.last_check_time.strftime('%H:%M:%S') if st.session_state.last_check_time else "Waiting...")
-            col3.metric("📊 Active Trades", len(st.session_state.active_trades))
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            new_signals = run_bot_cycle(SYMBOLS, timeframe, strategy, risk_amount, selected_mode, strategy_params, update_interval, progress_bar, status_text)
-            if new_signals:
-                st.session_state.signals.extend(new_signals)
-                for signal in new_signals: st.session_state.active_trades.append(signal.copy())
-                send_bulk_telegram_alerts(new_signals)
-                st.balloons()
-            if st.session_state.signals: display_signals_table(st.session_state.signals, "Live Trading Signals")
-            else: st.info("👀 **Waiting for today's signals...** Monitoring breakouts since 9:15 AM.")
-            time.sleep(0.5)
-            st.rerun()
-        else:
-            if st.session_state.signals: display_signals_table(st.session_state.signals, "Live Trading Signals")
-            else: st.info("👈 Click 'Start Bot' to begin live trading")
-    elif selected_mode == "Backtest (Last 2 Days)":
-        if st.button("🚀 Run Backtest", type="primary"):
-            signals = backtest_strategy(SYMBOLS, timeframe, strategy, None, None, risk_amount, selected_mode)
-            st.session_state.signals = signals
-            display_signals_table(signals)
-    else:
-        if st.button("🚀 Run Simulation", type="primary"):
-            signals = simulate_live_signals(SYMBOLS, timeframe, strategy, risk_amount, selected_mode)
-            st.session_state.signals = signals
-            display_signals_table(signals)
+    if st.session_state.auto_refresh and selected_mode == "Live Trading":
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Cycle", st.session_state.refresh_counter)
+        col2.metric("Time", datetime.now().strftime('%H:%M:%S'))
+        col3.metric("Signals", len(st.session_state.signals))
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        new_sigs = run_bot_cycle(SYMBOLS, timeframe, strategy, risk_amount, selected_mode, {}, update_interval, progress_bar, status_text)
+        if new_sigs:
+            st.session_state.signals.extend(new_sigs)
+            send_bulk_telegram_alerts(new_sigs)
+            st.balloons()
+            
+        display_signals_table(st.session_state.signals)
+        st.rerun()
 
 if __name__ == "__main__":
     main()
