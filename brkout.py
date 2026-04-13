@@ -101,11 +101,10 @@ if 'bot_thread' not in st.session_state:
     st.session_state.bot_thread = None
 if 'stop_bot' not in st.session_state:
     st.session_state.stop_bot = False
-if 'dynamic_symbols' not in st.session_state:
-    st.session_state.dynamic_symbols = []
 
-# BSE A-Group Scanner Logic (No manual SYMBOLS list)
-BSE_A_GROUP = ["ABB", "ACC", "ADANIENT", "ADANIPORTS", "AMBUJACEM", "APOLLOHOSP", "ASIANPAINT", "AUROPHARMA", "AXISBANK", "BAJAJ-AUTO", "BAJFINANCE", "BAJAJFINSV", "BALKRISIND", "BANDHANBNK", "BANKBARODA", "BEL", "BERGEPAINT", "BHARTIARTL", "BIOCON", "BPCL", "BRITANNIA", "CHOLAFIN", "CIPLA", "COALINDIA", "CONCOR", "CUMMINSIND", "DABUR", "DIVISLAB", "DLF", "DRREDDY", "EICHERMOT", "FEDERALBNK", "GAIL", "GLENMARK", "GRASIM", "GUJGASLTD", "HAL", "HAVELLS", "HCLTECH", "HDFCBANK", "HDFCLIFE", "HEROMOTOCO", "HINDALCO", "HINDPETRO", "HINDUNILVR", "ICICIBANK", "ICICIGI", "ICICIPRULI", "IDFCFIRSTB", "IGL", "INDHOTEL", "INDIACEM", "INDIAMART", "INDUSINDBK", "INFY", "IOC", "IRCTC", "ITC", "JSWSTEEL", "JUBLFOOD", "KOTAKBANK", "LT", "LTIM", "LUPIN", "M&M", "MARICO", "MARUTI", "MCDOWELL-N", "MCX", "METROPOLIS", "MFSL", "MGL", "MPHASIS", "MRF", "MUTHOOTFIN", "NATIONALUM", "NAVINFLUOR", "NESTLEIND", "NMDC", "NTPC", "OBEROIRLTY", "ONGC", "PAGEIND", "PEL", "PERSISTENT", "PETRONET", "PFC", "PIDILITIND", "PIIND", "PNB", "POLYCAB", "POWERGRID", "RELIANCE", "SAIL", "SBICARD", "SBILIFE", "SBIN", "SHREECEM", "SIEMENS", "SRF", "SUNPHARMA", "SUNTV", "SYNGENE", "TATACOMM", "TATACONSUM", "TATAMOTORS", "TATAPOWER", "TATASTEEL", "TCS", "TECHM", "TITAN", "TORNTPHARM", "TRENT", "TVSMOTOR", "UBL", "ULTRACEMCO", "UPL", "VOLTAS", "WIPRO", "ZEEL"]
+# Stock symbols
+SYMBOLS = ["BANKNIFTY", "NIFTY", "UPL", "INFY", "ULTRACEMCO", "RELIANCE", 
+           "ASIANPAINT", "ABB", "ACC", "LT", "HDFCBANK"]
 
 # Simple disclaimer for Telegram
 DISCLAIMER = """
@@ -116,23 +115,6 @@ We are NOT SEBI registered advisors.
 No trading recommendations provided.
 Always consult registered experts.
 ━━━━━━━━━━━━━━━━━━"""
-
-def get_bse_filtered_stocks():
-    """Scanner for BSE A-Group: LTP 500-3000, Gain 2-5%"""
-    tv = TvDatafeed()
-    filtered_list = []
-    try:
-        for symbol in BSE_A_GROUP:
-            data = tv.get_hist(symbol=symbol, exchange="NSE", interval=Interval.in_daily, n_bars=2)
-            if data is not None and len(data) >= 2:
-                ltp = round(data['close'].iloc[-1], 2)
-                prev_close = data['close'].iloc[-2]
-                pct_change = round(((ltp - prev_close) / prev_close) * 100, 2)
-                if 500 <= ltp <= 3000 and 2.0 <= pct_change <= 5.0:
-                    filtered_list.append(symbol)
-        return filtered_list
-    except:
-        return []
 
 def send_telegram_message_sync(message):
     """Send Telegram message using simple HTTP Request (More stable for Cloud)"""
@@ -327,7 +309,7 @@ class CandleBreakoutStrategy:
                     if date_tracker is not None: date_tracker[key] = True
                     signals.append(signal)
                     break
-           
+            
             # SELL Condition
             elif current_low < low_915:
                 entry = low_915
@@ -399,17 +381,12 @@ def main():
     st.title("📈 Algorithmic Trading System")
     st.markdown("---")
     with st.sidebar:
-        st.header("⚙️ Configuration")
         selected_mode = st.radio("Select Mode", ["Live Trading", "Backtest (Last 2 Days)"])
         risk_amount = st.number_input("Risk per Trade", 1000, 1000000, 10000)
         timeframe = st.selectbox("Timeframe", ['15min', '5min'])
         strategy = st.selectbox("Strategy", ["Candle Breakout Strategy"])
-        update_interval = st.slider("Update Interval", 5, 60, 60)
-        
-        if st.button("🔍 Refresh BSE Filter"):
-            st.session_state.dynamic_symbols = get_bse_filtered_stocks()
-            st.success(f"Found {len(st.session_state.dynamic_symbols)} Stocks!")
-
+        update_interval = st.slider("Update Interval", 5, 60, 10)
+        
         if not st.session_state.auto_refresh:
             if st.button("🚀 Start Bot", type="primary", use_container_width=True):
                 st.session_state.auto_refresh = True
@@ -425,12 +402,12 @@ def main():
         col1, col2, col3 = st.columns(3)
         col1.metric("Cycle", st.session_state.refresh_counter)
         col2.metric("Time", datetime.now().strftime('%H:%M:%S'))
-        col3.metric("Filtered Stocks", len(st.session_state.dynamic_symbols))
+        col3.metric("Signals", len(st.session_state.signals))
         
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        new_sigs = run_bot_cycle(st.session_state.dynamic_symbols, timeframe, strategy, risk_amount, selected_mode, {}, update_interval, progress_bar, status_text)
+        new_sigs = run_bot_cycle(SYMBOLS, timeframe, strategy, risk_amount, selected_mode, {}, update_interval, progress_bar, status_text)
         if new_sigs:
             st.session_state.signals.extend(new_sigs)
             send_bulk_telegram_alerts(new_sigs)
