@@ -13,6 +13,9 @@ from telegram import Bot
 from telegram.error import TelegramError
 import threading
 import requests
+# Import bsedata for the live BSE scan logic
+from bsedata.bse import BSE
+
 warnings.filterwarnings('ignore')
 
 # --- REMOVE ALL STREAMLIT & GITHUB BRANDING ---
@@ -117,42 +120,35 @@ Always consult registered experts.
 ━━━━━━━━━━━━━━━━━━"""
 
 def fetch_bse_gainers_live():
-    """Step 1: Fresh Live Market Scan for A-Group Gainers without pre-filled list"""
-    tv = TvDatafeed()
+    """Step 1: Fresh Live Market Scan using bsedata library to fetch actual BSE gainers"""
+    b = BSE()
     live_gainers = []
-    
-    # We search the BSE Exchange specifically for Group A stocks dynamically
     try:
         progress_bar = st.progress(0)
         status_text = st.empty()
-        status_text.text("Connecting to BSE... Searching for Group A Stocks...")
+        status_text.text("Connecting directly to BSE India Data Feed...")
         
-        # Searching BSE exchange for stocks. This fetches the current Group A members.
-        all_bse_stocks = tv.search_symbol('BSE')
+        # This fetches the ACTUAL Top Gainers from BSE website live
+        # 'top_gainers' is a built-in function that returns live market leaders
+        gainers_list = b.topGainers() 
         
-        # We process the top 150 liquid results to find Gainers
-        max_scan = min(len(all_bse_stocks), 150)
-        
-        for idx in range(max_scan):
-            symbol = all_bse_stocks[idx]['symbol']
-            progress_bar.progress((idx + 1) / max_scan)
-            status_text.text(f"Scanning Live BSE Market: {symbol}")
+        for idx, item in enumerate(gainers_list):
+            progress_bar.progress((idx + 1) / len(gainers_list))
+            symbol = item['securityID']
+            status_text.text(f"Processing BSE Gainer: {symbol}")
             
-            # Fetch Daily data to calculate Gain %
-            data = tv.get_hist(symbol=symbol, exchange="BSE", interval=Interval.in_daily, n_bars=2)
-            if data is not None and len(data) >= 2:
-                ltp = data['close'].iloc[-1]
-                prev_close = data['close'].iloc[-2]
-                pct_change = ((ltp - prev_close) / prev_close) * 100
-                
-                if pct_change > 0: # This is a Gainer
-                    live_gainers.append({'SYMBOL': symbol, 'LTP': ltp, 'CHANGE': pct_change})
-        
+            # Extract LTP and Pct Change from the live BSE feed
+            live_gainers.append({
+                'SYMBOL': symbol,
+                'LTP': float(item['ltp']),
+                'CHANGE': float(item['pChange'])
+            })
+            
         status_text.empty()
         progress_bar.empty()
         return live_gainers
     except Exception as e:
-        st.error(f"Market Connection Error: {e}")
+        st.error(f"BSE Data Feed Connection Error: {e}")
         return []
 
 def send_telegram_message_sync(message):
@@ -423,17 +419,20 @@ def main():
         strategy = st.selectbox("Select Strategy", ["Candle Breakout Strategy", "MA Crossover Strategy", "RSI Breakout Strategy"], index=0)
         update_interval = st.slider("Update Interval", 5, 60, 10)
         
-        # Step 1: BSE Connect
+        # Step 1: BSE Connect (Live Scan)
         if st.button("🔗 Step 1: Connect BSE (Live Scan Group A Gainers)"):
             st.session_state.bse_live_data = fetch_bse_gainers_live()
-            st.success(f"Live Scanned {len(st.session_state.bse_live_data)} A-Group Gainers!")
+            if st.session_state.bse_live_data:
+                st.success(f"Live Scanned {len(st.session_state.bse_live_data)} A-Group Gainers!")
+            else:
+                st.error("Connection failed. BSE website might be blocking the request.")
 
         # Step 2: Get Signal (Filtering + Starting)
         if st.button("🚀 Step 2: Get Signal (Filter & Start Bot)"):
             if not st.session_state.bse_live_data:
                 st.error("Click Step 1 first to scan the market!")
             else:
-                # Apply filters: Price 500-3000, Change 4% to 6%
+                # Apply User Filters: Price 500-3000, Change 4% to 6%
                 st.session_state.final_target_stocks = [s['SYMBOL'] for s in st.session_state.bse_live_data if 500 <= s['LTP'] <= 3000 and 4.0 <= s['CHANGE'] <= 6.0]
                 if not st.session_state.final_target_stocks:
                     st.warning("No stocks matched filtering criteria (500-3000 LTP, 4-6% Change).")
