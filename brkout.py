@@ -13,7 +13,6 @@ from telegram import Bot
 from telegram.error import TelegramError
 import threading
 import requests
-
 warnings.filterwarnings('ignore')
 
 # --- REMOVE ALL STREAMLIT & GITHUB BRANDING ---
@@ -53,7 +52,6 @@ st.markdown("""
         }
     </style>
     """, unsafe_allow_html=True)
-
 # Apply nest_asyncio to allow multiple asyncio runs
 nest_asyncio.apply()
 
@@ -103,103 +101,65 @@ if 'bot_thread' not in st.session_state:
     st.session_state.bot_thread = None
 if 'stop_bot' not in st.session_state:
     st.session_state.stop_bot = False
-if 'bse_live_data' not in st.session_state:
-    st.session_state.bse_live_data = []
-if 'final_target_stocks' not in st.session_state:
-    st.session_state.final_target_stocks = []
+if 'dynamic_symbols' not in st.session_state:
+    st.session_state.dynamic_symbols = []
 
 # Simple disclaimer for Telegram
 DISCLAIMER = """
 ━━━━━━━━━━━━━━━━━━
 📢 **EDUCATIONAL DISCLAIMER:**
 This is for STUDY & ANALYSIS only.
-We are NOT SEBI registered advisors.
-No trading recommendations provided.
-Always consult registered experts.
 ━━━━━━━━━━━━━━━━━━"""
 
-def fetch_bse_gainers_live():
-    """Step 1: Fresh Live Market Scan for A-Group Gainers using BSE's Real-time API"""
-    live_gainers = []
-    # BSE internal API for Top Gainers
-    url = "https://api.bseindia.com/BseIndiaAPI/Service/MarketWatch.ashx?filter=gainer*all$all$A"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-        "Referer": "https://www.bseindia.com/"
-    }
-    
+def get_nifty200_filtered_gainers():
+    """Scanner for Nifty 200 Top Gainers: LTP >500 & <3000, % Change >4% & <6%"""
     try:
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        status_text.text("Connecting live to BSE India website...")
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.nseindia.com/",
+            "Accept": "*/*"
+        }
+        session = requests.Session()
+        # First visit homepage to set cookies (required by NSE)
+        session.get("https://www.nseindia.com", headers=headers, timeout=10)
         
-        response = requests.get(url, headers=headers, timeout=15)
+        url = "https://www.nseindia.com/api/gainers?index=NIFTY%20200"
+        response = session.get(url, headers=headers, timeout=10)
+        
         if response.status_code == 200:
             data = response.json()
-            if 'Table' in data:
-                raw_list = data['Table']
-                total = len(raw_list)
-                
-                for idx, item in enumerate(raw_list):
-                    progress_bar.progress((idx + 1) / total)
-                    # Mapping BSE API columns: scrp_cd, ltp, chng_per, etc.
-                    symbol = item.get('scrip_cd', 'Unknown')
-                    ltp = item.get('ltp', 0)
-                    chg = item.get('chng_per', 0)
-                    
-                    # Convert strings to float safely
-                    try:
-                        f_ltp = float(str(ltp).replace(',', ''))
-                        f_chg = float(str(chg).replace(',', ''))
-                        
-                        live_gainers.append({
-                            'SYMBOL': symbol,
-                            'LTP': f_ltp,
-                            'CHANGE': f_chg
-                        })
-                    except: continue
-                    
-                status_text.success(f"Success! Found {len(live_gainers)} A-Group Gainers live.")
-                time.sleep(1)
-            else:
-                st.error("BSE structure changed. Table not found.")
+            gainers_data = data.get("data", [])
+            final_list = []
+            for stock in gainers_data:
+                symbol = stock.get("symbol")
+                try:
+                    ltp = float(stock.get("lastPrice", 0))
+                    pct_change = float(stock.get("pChange", 0))
+                    # Exact filter as requested: LTP more than 500 and less than 3000, %change more than 4% and less than 6%
+                    if symbol and 500 < ltp < 3000 and 4.0 < pct_change < 6.0:
+                        final_list.append(symbol)
+                except (ValueError, TypeError):
+                    continue
+            return final_list
         else:
-            st.error(f"BSE Connection Failed. Code: {response.status_code}")
-            
-        status_text.empty()
-        progress_bar.empty()
-        return live_gainers
+            st.warning(f"NSE API returned status: {response.status_code}")
+            return []
     except Exception as e:
-        st.error(f"Market Connection Error: {e}")
+        st.error(f"Error fetching Nifty 200 gainers: {str(e)}")
         return []
 
 def send_telegram_message_sync(message):
-    """Send Telegram message using simple HTTP Request (More stable for Cloud)"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": message,
-            "parse_mode": "Markdown"
-        }
+        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
         response = requests.post(url, data=payload)
-        if response.status_code == 200:
-            return True
-        else:
-            st.error(f"Telegram API Error: {response.text}")
-            return False
-    except Exception as e:
-        st.error(f"Failed to send Telegram alert: {str(e)}")
-        return False
+        return response.status_code == 200
+    except: return False
 
 def send_telegram_alert(signal, alert_type="ENTRY"):
-    """Send signal alert to Telegram group"""
     try:
-        if signal['SIGNAL'] == 'BUY':
-            emoji = "🟢"
-        else:
-            emoji = "🔴"
-        
+        emoji = "🟢" if signal['SIGNAL'] == 'BUY' else "🔴"
         if alert_type == "ENTRY":
             title = "NEW TRADE SIGNAL"
             message = f"""
@@ -210,274 +170,131 @@ def send_telegram_alert(signal, alert_type="ENTRY"):
 💰 *Entry:* ₹{signal['ENTRY']}
 🛑 *Stop Loss:* ₹{signal['STOPLOSS']}
 📈 *Target 1:* ₹{signal['T1']}
-📈 *Target 2:* ₹{signal['T2']}
-📈 *Target 3:* ₹{signal['T3']}
 📦 *Quantity:* {signal['QUANTITY']}
 ⏰ *Time:* {signal['ENTRY_TIME']}
 📅 *Date:* {signal['DATE']}
 ⚡ *Breakout at:* {signal['BREAKOUT_CANDLE']}
 
-Risk-Reward: 1:1, 1:2, 1:3
 {DISCLAIMER}
             """
-        elif alert_type == "STOPLOSS":
-            title = "STOP LOSS HIT"
-            pnl = signal.get('PNL', 0)
-            message = f"""
-{emoji} *{title}* {emoji}
-
-📊 *Symbol:* {signal['SYMBOL']}
-🎯 *Signal:* {signal['SIGNAL']}
-💰 *Entry:* ₹{signal['ENTRY']}
-🛑 *Stop Loss Hit:* ₹{signal['STOPLOSS']}
-📉 *Loss:* ₹{abs(pnl):,.2f}
-⏰ *Time:* {datetime.now().strftime('%H:%M:%S')}
-📅 *Date:* {datetime.now().strftime('%Y-%m-%d')}
-
-Trade Closed with Loss ❌
-{DISCLAIMER}
-            """
-        elif alert_type == "TARGET1":
-            title = "TARGET 1 HIT"
-            pnl = signal.get('PNL', 0)
-            message = f"""
-{emoji} *{title}* {emoji}
-
-📊 *Symbol:* {signal['SYMBOL']}
-🎯 *Signal:* {signal['SIGNAL']}
-💰 *Entry:* ₹{signal['ENTRY']}
-✅ *Target 1 Hit:* ₹{signal['T1']}
-📈 *Profit:* ₹{pnl:,.2f}
-⏰ *Time:* {datetime.now().strftime('%H:%M:%S')}
-📅 *Date:* {datetime.now().strftime('%Y-%m-%d')}
-
-Partial Profit Booked! 🎯
-{DISCLAIMER}
-            """
-        elif alert_type == "TARGET2":
-            title = "TARGET 2 HIT"
-            pnl = signal.get('PNL', 0)
-            message = f"""
-{emoji} *{title}* {emoji}
-
-📊 *Symbol:* {signal['SYMBOL']}
-🎯 *Signal:* {signal['SIGNAL']}
-💰 *Entry:* ₹{signal['ENTRY']}
-✅ *Target 2 Hit:* ₹{signal['T2']}
-📈 *Profit:* ₹{pnl:,.2f}
-⏰ *Time:* {datetime.now().strftime('%H:%M:%S')}
-📅 *Date:* {datetime.now().strftime('%Y-%m-%d')}
-
-Partial Profit Booked! 🎯🎯
-{DISCLAIMER}
-            """
-        elif alert_type == "TARGET3":
-            title = "TARGET 3 HIT"
-            pnl = signal.get('PNL', 0)
-            message = f"""
-{emoji} *{title}* {emoji}
-
-📊 *Symbol:* {signal['SYMBOL']}
-🎯 *Signal:* {signal['SIGNAL']}
-💰 *Entry:* ₹{signal['ENTRY']}
-✅ *Target 3 Hit:* ₹{signal['T3']}
-📈 *Total Profit:* ₹{pnl:,.2f}
-⏰ *Time:* {datetime.now().strftime('%H:%M:%S')}
-📅 *Date:* {datetime.now().strftime('%Y-%m-%d')}
-
-Trade Completed - Full Profit! 🎯🎯🎯
-{DISCLAIMER}
-            """
-        
         return send_telegram_message_sync(message)
-        
-    except Exception as e:
-        st.error(f"Failed to send Telegram alert: {str(e)}")
-        return False
+    except: return False
 
 def send_bulk_telegram_alerts(signals):
-    """Send multiple alerts to Telegram"""
     for signal in signals:
         send_telegram_alert(signal, "ENTRY")
         time.sleep(1)
 
 def round_to_2_decimals(value):
-    """Round value to 2 decimal places"""
     return round(float(value), 2)
 
 class CandleBreakoutStrategy:
-    """Strategy: 9:15 reference, any future candle breakout, persistent day scan"""
-    
     def __init__(self, timeframe='15min', risk_amount=10000, mode="Live Trading"):
-        self.timeframe = timeframe
-        self.risk_amount = risk_amount
-        self.mode = mode
+        self.timeframe, self.risk_amount, self.mode = timeframe, risk_amount, mode
         self.name = "Candle Breakout Strategy"
         
     def analyze(self, df, symbol, date_tracker=None):
-        if df is None or len(df) < 2:
-            return None
-            
+        if df is None or len(df) < 2: return None
         signals = []
         df.index = pd.to_datetime(df.index)
         today_date = datetime.now().date()
         today_df = df[df.index.date == today_date]
-        
-        if len(today_df) < 1:
-            return None
+        if len(today_df) < 1: return None
 
-        # Persistent logic: Find first candle of today as reference
         reference_candle = today_df.iloc[0]
-        
         high_915 = round_to_2_decimals(reference_candle['high'])
         low_915 = round_to_2_decimals(reference_candle['low'])
         date_str = today_date.strftime('%Y-%m-%d')
         
         if date_tracker is not None:
             key = f"{symbol}_{date_str}"
-            if date_tracker.get(key, False):
-                return None
+            if date_tracker.get(key, False): return None
         
-        # PERSISTENT SCAN: Check all candles since 9:30 AM
+        # Persistent Scanning of today's candles
         for i in range(1, len(today_df)):
-            current_candle = today_df.iloc[i]
-            current_high = round_to_2_decimals(current_candle['high'])
-            current_low = round_to_2_decimals(current_candle['low'])
-            
-            # BUY Condition
-            if current_high > high_915:
+            curr = today_df.iloc[i]
+            if curr['high'] > high_915:
                 entry = high_915
-                stop_loss = low_915
-                risk = round_to_2_decimals(entry - stop_loss)
+                risk = round_to_2_decimals(high_915 - low_915)
                 if risk > 0:
-                    quantity = int(self.risk_amount / risk)
-                    signal = {
-                        'DATE': date_str, 'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'),
-                        'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 'SYMBOL': symbol,
-                        'SIGNAL': 'BUY', 'ENTRY': entry, 'QUANTITY': quantity,
-                        'STOPLOSS': stop_loss, 'T1': round_to_2_decimals(entry + risk),
-                        'T2': round_to_2_decimals(entry + risk * 2), 'T3': round_to_2_decimals(entry + risk * 3),
-                        'VOLUME': int(current_candle['volume']), 'T1_HIT': False, 'T2_HIT': False, 'T3_HIT': False
-                    }
+                    qty = int(self.risk_amount / risk)
+                    sig = {'DATE': date_str, 'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'), 'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 'SYMBOL': symbol, 'SIGNAL': 'BUY', 'ENTRY': entry, 'QUANTITY': qty, 'STOPLOSS': low_915, 'T1': round_to_2_decimals(entry + risk), 'T2': round_to_2_decimals(entry + risk*2), 'T3': round_to_2_decimals(entry + risk*3), 'VOLUME': int(curr['volume'])}
                     if date_tracker is not None: date_tracker[key] = True
-                    signals.append(signal)
+                    signals.append(sig)
                     break
-            
-            # SELL Condition
-            elif current_low < low_915:
+            elif curr['low'] < low_915:
                 entry = low_915
-                stop_loss = high_915
-                risk = round_to_2_decimals(stop_loss - entry)
+                risk = round_to_2_decimals(high_915 - low_915)
                 if risk > 0:
-                    quantity = int(self.risk_amount / risk)
-                    signal = {
-                        'DATE': date_str, 'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'),
-                        'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 'SYMBOL': symbol,
-                        'SIGNAL': 'SELL', 'ENTRY': entry, 'QUANTITY': quantity,
-                        'STOPLOSS': stop_loss, 'T1': round_to_2_decimals(entry - risk),
-                        'T2': round_to_2_decimals(entry - risk * 2), 'T3': round_to_2_decimals(entry - risk * 3),
-                        'VOLUME': int(current_candle['volume']), 'T1_HIT': False, 'T2_HIT': False, 'T3_HIT': False
-                    }
+                    qty = int(self.risk_amount / risk)
+                    sig = {'DATE': date_str, 'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'), 'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 'SYMBOL': symbol, 'SIGNAL': 'SELL', 'ENTRY': entry, 'QUANTITY': qty, 'STOPLOSS': high_915, 'T1': round_to_2_decimals(entry - risk), 'T2': round_to_2_decimals(entry - risk*2), 'T3': round_to_2_decimals(entry - risk*3), 'VOLUME': int(curr['volume'])}
                     if date_tracker is not None: date_tracker[key] = True
-                    signals.append(signal)
+                    signals.append(sig)
                     break
         return signals
-
-class MovingAverageCrossStrategy:
-    """Strategy 2: Moving Average Crossover Strategy"""
-    def __init__(self, timeframe='15min', fast_ma=9, slow_ma=21, risk_amount=10000, mode="Live Trading"):
-        self.timeframe, self.fast_ma, self.slow_ma, self.risk_amount, self.mode = timeframe, fast_ma, slow_ma, risk_amount, mode
-    def analyze(self, df, symbol, date_tracker=None):
-        return None
-
-class RSIBreakoutStrategy:
-    """Strategy 3: RSI + Breakout Strategy"""
-    def __init__(self, timeframe='15min', rsi_period=14, risk_amount=10000, mode="Live Trading"):
-        self.timeframe, self.rsi_period, self.risk_amount, self.mode = timeframe, rsi_period, risk_amount, mode
-    def analyze(self, df, symbol, date_tracker=None):
-        return None
 
 def fetch_data(symbol, interval, n_bars=100):
     try:
         tv = TvDatafeed()
         inv_map = {'5min': Interval.in_5_minute, '15min': Interval.in_15_minute, 'daily': Interval.in_daily}
-        return tv.get_hist(symbol=symbol, exchange="BSE", interval=inv_map.get(interval, Interval.in_15_minute), n_bars=n_bars)
+        return tv.get_hist(symbol=symbol, exchange="NSE", interval=inv_map.get(interval, Interval.in_15_minute), n_bars=n_bars)
     except: return None
 
-def check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amount, mode, existing_signals, **strategy_params):
-    all_new_signals = []
-    strategy = CandleBreakoutStrategy(timeframe, risk_amount, mode)
+def check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amount, mode):
+    all_new = []
+    strat = CandleBreakoutStrategy(timeframe, risk_amount, mode)
     for symbol in selected_symbols:
         data = fetch_data(symbol, timeframe)
-        if data is not None:
-            signals = strategy.analyze(data, symbol, st.session_state.signal_count_per_stock)
-            if signals: all_new_signals.extend(signals)
-    return all_new_signals
+        sigs = strat.analyze(data, symbol, st.session_state.signal_count_per_stock)
+        if sigs: all_new.extend(sigs)
+    return all_new
 
-def run_bot_cycle(selected_symbols, timeframe, strategy, risk_amount, selected_mode, strategy_params, refresh_interval, progress_bar, status_text):
+def run_bot_cycle(symbols, timeframe, strategy, risk, mode, interval, progress_bar, status_text):
     st.session_state.refresh_counter += 1
     st.session_state.last_check_time = datetime.now()
-    for i in range(refresh_interval, 0, -1):
-        progress_bar.progress((refresh_interval - i) / refresh_interval)
+    for i in range(interval, 0, -1):
+        progress_bar.progress((interval - i) / interval)
         status_text.text(f"🔄 Next check in {i} seconds... (Cycle: {st.session_state.refresh_counter})")
         time.sleep(1)
-    return check_for_new_signals(selected_symbols, timeframe, strategy, risk_amount, selected_mode, st.session_state.signals, **strategy_params)
+    return check_for_new_signals(symbols, timeframe, strategy, risk, mode)
 
-def display_signals_table(signals, title="Trading Signals"):
+def display_signals_table(signals):
     if signals:
         df = pd.DataFrame(signals)
         st.dataframe(df.style.map(lambda x: 'background-color: #00ff00; color: black' if x == 'BUY' else ('background-color: #ff0000; color: white' if x == 'SELL' else ''), subset=['SIGNAL']), use_container_width=True)
 
 def main():
     st.title("📈 Algorithmic Trading System")
-    st.markdown("---")
     with st.sidebar:
         st.header("⚙️ Configuration")
-        selected_mode = st.radio("Select Mode", options=["Live Trading", "Backtest (Last 2 Days)", "Simulation (Market Closed)"], index=0)
-        st.session_state.mode = selected_mode
+        selected_mode = st.radio("Select Mode", ["Live Trading", "Backtest (Last 2 Days)"])
         risk_amount = st.number_input("Risk per Trade", 1000, 1000000, 10000)
-        timeframe = st.selectbox("Timeframe", ['15min', '5min'], index=0)
-        strategy = st.selectbox("Select Strategy", ["Candle Breakout Strategy", "MA Crossover Strategy", "RSI Breakout Strategy"], index=0)
-        update_interval = st.slider("Update Interval", 5, 60, 10)
+        timeframe = st.selectbox("Timeframe", ['15min', '5min'])
+        update_interval = st.slider("Update Interval", 5, 60, 60)
         
-        # Step 1: BSE Scan
-        if st.button("🔗 Step 1: Connect BSE (Live Scan Group A Gainers)"):
-            st.session_state.bse_live_data = fetch_bse_gainers_live()
-            if st.session_state.bse_live_data:
-                st.success(f"Scanned {len(st.session_state.bse_live_data)} A-Group Gainers Freshly!")
-
-        # Step 2: Get Signal (Filtering + Starting)
-        if st.button("🚀 Step 2: Get Signal (Filter & Start Bot)"):
-            if not st.session_state.bse_live_data:
-                st.error("Click Step 1 first to scan the market!")
+        if st.button("🔍 Get Nifty 200 Gainers (LTP 500-3000, >4% & <6%)"):
+            st.session_state.dynamic_symbols = get_nifty200_filtered_gainers()
+            if st.session_state.dynamic_symbols:
+                st.success(f"✅ Found {len(st.session_state.dynamic_symbols)} Stocks!")
             else:
-                # Apply Rules: Price 500-3000, Change 4% to 6%
-                st.session_state.final_target_stocks = [s['SYMBOL'] for s in st.session_state.bse_live_data if 500 <= s['LTP'] <= 3000 and 4.0 <= s['CHANGE'] <= 6.0]
-                if not st.session_state.final_target_stocks:
-                    st.warning("No stocks matched filtering criteria (500-3000 LTP, 4-6% Change).")
-                else:
-                    st.session_state.auto_refresh = True
-                    st.rerun()
+                st.warning("No stocks matched the criteria or error fetching data.")
 
-        if st.button("⏹ Stop Bot"):
-            st.session_state.auto_refresh = False
-            st.rerun()
-        
-        if st.button("🗑️ Clear Signals", use_container_width=True):
-            st.session_state.signals = []
-            st.session_state.active_trades = []
-            st.success("Signals cleared!")
+        if st.button("🚀 Start Bot" if not st.session_state.auto_refresh else "⏹ Stop Bot"):
+            if not st.session_state.dynamic_symbols: st.error("Scan Nifty 200 Gainers first!")
+            else:
+                st.session_state.auto_refresh = not st.session_state.auto_refresh
+                st.rerun()
 
-    if st.session_state.auto_refresh:
+    if st.session_state.auto_refresh and selected_mode == "Live Trading":
         col1, col2, col3 = st.columns(3)
         col1.metric("Cycle", st.session_state.refresh_counter)
         col2.metric("Time", datetime.now().strftime('%H:%M:%S'))
-        col3.metric("Stocks", len(st.session_state.final_target_stocks))
+        col3.metric("Stocks", len(st.session_state.dynamic_symbols))
         
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        new_sigs = run_bot_cycle(st.session_state.final_target_stocks, timeframe, strategy, risk_amount, selected_mode, {}, update_interval, progress_bar, status_text)
+        new_sigs = run_bot_cycle(st.session_state.dynamic_symbols, timeframe, "Candle Breakout Strategy", risk_amount, selected_mode, update_interval, progress_bar, status_text)
         if new_sigs:
             st.session_state.signals.extend(new_sigs)
             send_bulk_telegram_alerts(new_sigs)
