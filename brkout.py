@@ -112,41 +112,43 @@ This is for STUDY & ANALYSIS only.
 ━━━━━━━━━━━━━━━━━━"""
 
 def get_nifty200_filtered_gainers():
-    """Scanner for Nifty 200 Top Gainers: LTP >500 & <3000, % Change >4% & <6%"""
+    """Step 1: Fresh Live Market Scan for Nifty 200 Gainers with persistent session to avoid connection error"""
     try:
+        # NSE requires a specific header and cookies to allow connection
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://www.nseindia.com/",
-            "Accept": "*/*"
+            "Accept-Encoding": "gzip, deflate, br",
+            "Referer": "https://www.nseindia.com/market-data/live-equity-market"
         }
         session = requests.Session()
-        # First visit homepage to set cookies (required by NSE)
+        # First visit the home page to get the necessary cookies
         session.get("https://www.nseindia.com", headers=headers, timeout=10)
         
-        url = "https://www.nseindia.com/api/gainers?index=NIFTY%20200"
+        # Now fetch the Nifty 200 Gainers
+        url = "https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20200"
         response = session.get(url, headers=headers, timeout=10)
         
         if response.status_code == 200:
             data = response.json()
-            gainers_data = data.get("data", [])
+            stocks_data = data.get("data", [])
             final_list = []
-            for stock in gainers_data:
+            for stock in stocks_data:
                 symbol = stock.get("symbol")
                 try:
-                    ltp = float(stock.get("lastPrice", 0))
-                    pct_change = float(stock.get("pChange", 0))
-                    # Exact filter as requested: LTP more than 500 and less than 3000, %change more than 4% and less than 6%
-                    if symbol and 500 < ltp < 3000 and 4.0 < pct_change < 6.0:
+                    ltp = float(str(stock.get("lastPrice", 0)).replace(',', ''))
+                    pct_change = float(str(stock.get("pChange", 0)).replace(',', ''))
+                    
+                    # FILTER: LTP between 500-3000 AND %Change between 4% and 6%
+                    if 500 <= ltp <= 3000 and 4.0 <= pct_change <= 6.0:
                         final_list.append(symbol)
-                except (ValueError, TypeError):
+                except:
                     continue
             return final_list
         else:
-            st.warning(f"NSE API returned status: {response.status_code}")
             return []
     except Exception as e:
-        st.error(f"Error fetching Nifty 200 gainers: {str(e)}")
+        st.error(f"NSE Connection Error: {str(e)}")
         return []
 
 def send_telegram_message_sync(message):
@@ -172,7 +174,6 @@ def send_telegram_alert(signal, alert_type="ENTRY"):
 📈 *Target 1:* ₹{signal['T1']}
 📦 *Quantity:* {signal['QUANTITY']}
 ⏰ *Time:* {signal['ENTRY_TIME']}
-📅 *Date:* {signal['DATE']}
 ⚡ *Breakout at:* {signal['BREAKOUT_CANDLE']}
 
 {DISCLAIMER}
@@ -192,7 +193,7 @@ class CandleBreakoutStrategy:
     def __init__(self, timeframe='15min', risk_amount=10000, mode="Live Trading"):
         self.timeframe, self.risk_amount, self.mode = timeframe, risk_amount, mode
         self.name = "Candle Breakout Strategy"
-        
+
     def analyze(self, df, symbol, date_tracker=None):
         if df is None or len(df) < 2: return None
         signals = []
@@ -202,32 +203,30 @@ class CandleBreakoutStrategy:
         if len(today_df) < 1: return None
 
         reference_candle = today_df.iloc[0]
-        high_915 = round_to_2_decimals(reference_candle['high'])
-        low_915 = round_to_2_decimals(reference_candle['low'])
+        h915, l915 = round_to_2_decimals(reference_candle['high']), round_to_2_decimals(reference_candle['low'])
         date_str = today_date.strftime('%Y-%m-%d')
-        
+
         if date_tracker is not None:
             key = f"{symbol}_{date_str}"
             if date_tracker.get(key, False): return None
-        
-        # Persistent Scanning of today's candles
+
         for i in range(1, len(today_df)):
             curr = today_df.iloc[i]
-            if curr['high'] > high_915:
-                entry = high_915
-                risk = round_to_2_decimals(high_915 - low_915)
+            if curr['high'] > h915:
+                entry = h915
+                risk = round_to_2_decimals(h915 - l915)
                 if risk > 0:
                     qty = int(self.risk_amount / risk)
-                    sig = {'DATE': date_str, 'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'), 'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 'SYMBOL': symbol, 'SIGNAL': 'BUY', 'ENTRY': entry, 'QUANTITY': qty, 'STOPLOSS': low_915, 'T1': round_to_2_decimals(entry + risk), 'T2': round_to_2_decimals(entry + risk*2), 'T3': round_to_2_decimals(entry + risk*3), 'VOLUME': int(curr['volume'])}
+                    sig = {'DATE': date_str, 'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'), 'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 'SYMBOL': symbol, 'SIGNAL': 'BUY', 'ENTRY': entry, 'QUANTITY': qty, 'STOPLOSS': l915, 'T1': round_to_2_decimals(entry + risk), 'T2': round_to_2_decimals(entry + risk*2), 'T3': round_to_2_decimals(entry + risk*3), 'VOLUME': int(curr['volume'])}
                     if date_tracker is not None: date_tracker[key] = True
                     signals.append(sig)
                     break
-            elif curr['low'] < low_915:
-                entry = low_915
-                risk = round_to_2_decimals(high_915 - low_915)
+            elif curr['low'] < l915:
+                entry = l915
+                risk = round_to_2_decimals(h915 - l915)
                 if risk > 0:
                     qty = int(self.risk_amount / risk)
-                    sig = {'DATE': date_str, 'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'), 'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 'SYMBOL': symbol, 'SIGNAL': 'SELL', 'ENTRY': entry, 'QUANTITY': qty, 'STOPLOSS': high_915, 'T1': round_to_2_decimals(entry - risk), 'T2': round_to_2_decimals(entry - risk*2), 'T3': round_to_2_decimals(entry - risk*3), 'VOLUME': int(curr['volume'])}
+                    sig = {'DATE': date_str, 'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'), 'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 'SYMBOL': symbol, 'SIGNAL': 'SELL', 'ENTRY': entry, 'QUANTITY': qty, 'STOPLOSS': h915, 'T1': round_to_2_decimals(entry - risk), 'T2': round_to_2_decimals(entry - risk*2), 'T3': round_to_2_decimals(entry - risk*3), 'VOLUME': int(curr['volume'])}
                     if date_tracker is not None: date_tracker[key] = True
                     signals.append(sig)
                     break
@@ -241,13 +240,14 @@ def fetch_data(symbol, interval, n_bars=100):
     except: return None
 
 def check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amount, mode):
-    all_new = []
+    all_new_signals = []
     strat = CandleBreakoutStrategy(timeframe, risk_amount, mode)
     for symbol in selected_symbols:
         data = fetch_data(symbol, timeframe)
-        sigs = strat.analyze(data, symbol, st.session_state.signal_count_per_stock)
-        if sigs: all_new.extend(sigs)
-    return all_new
+        if data is not None:
+            sigs = strat.analyze(data, symbol, st.session_state.signal_count_per_stock)
+            if sigs: all_new_signals.extend(sigs)
+    return all_new_signals
 
 def run_bot_cycle(symbols, timeframe, strategy, risk, mode, interval, progress_bar, status_text):
     st.session_state.refresh_counter += 1
@@ -256,7 +256,7 @@ def run_bot_cycle(symbols, timeframe, strategy, risk, mode, interval, progress_b
         progress_bar.progress((interval - i) / interval)
         status_text.text(f"🔄 Next check in {i} seconds... (Cycle: {st.session_state.refresh_counter})")
         time.sleep(1)
-    return check_for_new_signals(symbols, timeframe, strategy, risk, mode)
+    return check_for_new_signals(symbols, timeframe, risk, mode)
 
 def display_signals_table(signals):
     if signals:
@@ -265,41 +265,47 @@ def display_signals_table(signals):
 
 def main():
     st.title("📈 Algorithmic Trading System")
+    st.markdown("---")
     with st.sidebar:
         st.header("⚙️ Configuration")
         selected_mode = st.radio("Select Mode", ["Live Trading", "Backtest (Last 2 Days)"])
         risk_amount = st.number_input("Risk per Trade", 1000, 1000000, 10000)
         timeframe = st.selectbox("Timeframe", ['15min', '5min'])
         update_interval = st.slider("Update Interval", 5, 60, 60)
-        
-        if st.button("🔍 Get Nifty 200 Gainers (LTP 500-3000, >4% & <6%)"):
-            st.session_state.dynamic_symbols = get_nifty200_filtered_gainers()
-            if st.session_state.dynamic_symbols:
-                st.success(f"✅ Found {len(st.session_state.dynamic_symbols)} Stocks!")
-            else:
-                st.warning("No stocks matched the criteria or error fetching data.")
 
-        if st.button("🚀 Start Bot" if not st.session_state.auto_refresh else "⏹ Stop Bot"):
-            if not st.session_state.dynamic_symbols: st.error("Scan Nifty 200 Gainers first!")
+        if st.button("🔗 Step 1: Connect NSE Website"):
+            with st.spinner("Fetching Nifty 200 Gainers..."):
+                st.session_state.dynamic_symbols = get_nifty200_filtered_gainers()
+                if st.session_state.dynamic_symbols:
+                    st.success(f"✅ Found {len(st.session_state.dynamic_symbols)} Stocks (Change 4-6%, Price 500-3000)")
+                else:
+                    st.error("No stocks matched filtering criteria at this moment.")
+
+        if st.button("🚀 Step 2: Get Signal (Start Bot)"):
+            if not st.session_state.dynamic_symbols: st.error("Click Step 1 first!")
             else:
-                st.session_state.auto_refresh = not st.session_state.auto_refresh
+                st.session_state.auto_refresh = True
                 st.rerun()
 
-    if st.session_state.auto_refresh and selected_mode == "Live Trading":
+        if st.button("⏹ Stop Bot"):
+            st.session_state.auto_refresh = False
+            st.rerun()
+
+    if st.session_state.auto_refresh:
         col1, col2, col3 = st.columns(3)
         col1.metric("Cycle", st.session_state.refresh_counter)
         col2.metric("Time", datetime.now().strftime('%H:%M:%S'))
         col3.metric("Stocks", len(st.session_state.dynamic_symbols))
-        
+
         progress_bar = st.progress(0)
         status_text = st.empty()
-        
+
         new_sigs = run_bot_cycle(st.session_state.dynamic_symbols, timeframe, "Candle Breakout Strategy", risk_amount, selected_mode, update_interval, progress_bar, status_text)
         if new_sigs:
             st.session_state.signals.extend(new_sigs)
             send_bulk_telegram_alerts(new_sigs)
             st.balloons()
-            
+
         display_signals_table(st.session_state.signals)
         st.rerun()
 
