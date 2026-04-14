@@ -102,10 +102,10 @@ if 'bot_thread' not in st.session_state:
     st.session_state.bot_thread = None
 if 'stop_bot' not in st.session_state:
     st.session_state.stop_bot = False
-if 'nifty200_stocks' not in st.session_state:
-    st.session_state.nifty200_stocks = []
-if 'filtered_nifty200' not in st.session_state:
-    st.session_state.filtered_nifty200 = []
+if 'nifty200_stocks_df' not in st.session_state:
+    st.session_state.nifty200_stocks_df = pd.DataFrame()  # Changed to DataFrame
+if 'filtered_nifty200_symbols' not in st.session_state:
+    st.session_state.filtered_nifty200_symbols = []
 
 # Stock symbols (original)
 ORIGINAL_SYMBOLS = ["BANKNIFTY", "NIFTY", "UPL", "INFY", "ULTRACEMCO", "RELIANCE", 
@@ -177,7 +177,7 @@ def fetch_nifty200_stocks():
 def filter_nifty200_stocks(df, min_change=2, max_change=5, min_ltp=500, max_ltp=3000):
     """Filter NIFTY 200 stocks based on criteria"""
     if df.empty:
-        return df
+        return df, []
     
     filtered = df[
         (df['Change %'] >= min_change) & 
@@ -186,7 +186,10 @@ def filter_nifty200_stocks(df, min_change=2, max_change=5, min_ltp=500, max_ltp=
         (df['LTP'] < max_ltp)
     ]
     
-    return filtered.sort_values('Change %', ascending=False)
+    filtered = filtered.sort_values('Change %', ascending=False)
+    symbols_list = filtered['Symbol'].tolist()
+    
+    return filtered, symbols_list
 
 # --- TELEGRAM FUNCTIONS ---
 def send_telegram_message_sync(message):
@@ -487,10 +490,11 @@ def main():
             with st.spinner("Fetching NIFTY 200 stocks from NSE..."):
                 nifty_df = fetch_nifty200_stocks()
                 if not nifty_df.empty:
-                    filtered_nifty = filter_nifty200_stocks(nifty_df, min_change, max_change, min_ltp, max_ltp)
-                    st.session_state.filtered_nifty200 = filtered_nifty['Symbol'].tolist()
-                    st.session_state.nifty200_stocks = filtered_nifty
-                    st.success(f"✅ Found {len(st.session_state.filtered_nifty200)} stocks matching criteria!")
+                    filtered_df, symbols_list = filter_nifty200_stocks(nifty_df, min_change, max_change, min_ltp, max_ltp)
+                    st.session_state.nifty200_stocks_df = filtered_df
+                    st.session_state.filtered_nifty200_symbols = symbols_list
+                    st.success(f"✅ Found {len(symbols_list)} stocks matching criteria!")
+                    st.rerun()
                 else:
                     st.error("Failed to fetch NIFTY 200 data")
         
@@ -501,11 +505,11 @@ def main():
         
         use_nifty200 = st.checkbox("Use NIFTY 200 Filtered Stocks", value=False)
         
-        if use_nifty200 and st.session_state.filtered_nifty200:
+        if use_nifty200 and st.session_state.filtered_nifty200_symbols:
             selected_symbols = st.multiselect(
                 "Select Stocks for Trading",
-                st.session_state.filtered_nifty200,
-                default=st.session_state.filtered_nifty200[:5] if st.session_state.filtered_nifty200 else []
+                st.session_state.filtered_nifty200_symbols,
+                default=st.session_state.filtered_nifty200_symbols[:5] if st.session_state.filtered_nifty200_symbols else []
             )
             st.info(f"📊 {len(selected_symbols)} stocks selected from NIFTY 200 filter")
         else:
@@ -542,9 +546,9 @@ def main():
         st.metric("Last Check", st.session_state.last_check_time.strftime('%H:%M:%S') if st.session_state.last_check_time else "Never")
     
     # Display NIFTY 200 filtered stocks if available
-    if not st.session_state.nifty200_stocks.empty and 'nifty200_stocks' in st.session_state:
+    if st.session_state.nifty200_stocks_df is not None and not st.session_state.nifty200_stocks_df.empty:
         with st.expander("📊 NIFTY 200 Filtered Stocks", expanded=False):
-            display_df = st.session_state.nifty200_stocks.copy()
+            display_df = st.session_state.nifty200_stocks_df.copy()
             display_df['LTP'] = display_df['LTP'].apply(lambda x: f"₹{x:,.2f}")
             display_df['Change %'] = display_df['Change %'].apply(lambda x: f"{x:+.2f}%")
             st.dataframe(display_df[['Symbol', 'LTP', 'Change %', 'Volume']], use_container_width=True)
@@ -588,6 +592,7 @@ def main():
     elif st.session_state.auto_refresh and not selected_symbols:
         st.warning("⚠️ Please select at least one stock for trading!")
         st.session_state.auto_refresh = False
+        st.rerun()
     
     else:
         # Display existing signals if any
