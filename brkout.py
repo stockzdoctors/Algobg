@@ -103,6 +103,8 @@ if 'stop_bot' not in st.session_state:
     st.session_state.stop_bot = False
 if 'filtered_stocks' not in st.session_state:
     st.session_state.filtered_stocks = []
+if 'filtered_df' not in st.session_state:
+    st.session_state.filtered_df = pd.DataFrame()
 if 'use_filtered' not in st.session_state:
     st.session_state.use_filtered = False
 
@@ -120,7 +122,7 @@ No trading recommendations provided.
 Always consult registered experts.
 ━━━━━━━━━━━━━━━━━━"""
 
-# --- NSE NIFTY 200 FETCH FUNCTION (ADDED) ---
+# --- NSE NIFTY 200 FETCH FUNCTION ---
 @st.cache_data(ttl=300)
 def fetch_nifty200_stocks():
     """Fetch NIFTY 200 stocks from NSE India"""
@@ -432,6 +434,8 @@ def display_signals_table(signals, title="Signals"):
 def main():
     st.title("📈 Algorithmic Trading System")
     st.markdown("---")
+    
+    # Sidebar
     with st.sidebar:
         selected_mode = st.radio("Select Mode", ["Live Trading", "Backtest (Last 2 Days)"])
         risk_amount = st.number_input("Risk per Trade", 1000, 1000000, 10000)
@@ -439,9 +443,9 @@ def main():
         strategy = st.selectbox("Strategy", ["Candle Breakout Strategy"])
         update_interval = st.slider("Update Interval", 5, 60, 10)
         
-        # --- ADDED: NIFTY 200 GET DATA SECTION ---
         st.markdown("---")
-        st.subheader("📊 NIFTY 200 Screener")
+        st.subheader("📊 NIFTY 200 Filter")
+        
         min_change = st.number_input("Min Change %", 0.0, 100.0, 2.0, 0.5)
         max_change = st.number_input("Max Change %", 0.0, 100.0, 5.0, 0.5)
         min_ltp = st.number_input("Min LTP (₹)", 0, 10000, 500, 100)
@@ -460,28 +464,20 @@ def main():
                     st.session_state.filtered_stocks = filtered['Symbol'].tolist()
                     st.session_state.filtered_df = filtered
                     st.success(f"✅ Found {len(st.session_state.filtered_stocks)} stocks!")
+                    st.rerun()
                 else:
                     st.error("Failed to fetch data")
         
-        # Display filtered stocks
-        if 'filtered_df' in st.session_state and not st.session_state.filtered_df.empty:
-            with st.expander(f"📋 Filtered Stocks ({len(st.session_state.filtered_stocks)})", expanded=True):
-                display_df = st.session_state.filtered_df.copy()
-                display_df['LTP'] = display_df['LTP'].apply(lambda x: f"₹{x:,.2f}")
-                display_df['Change %'] = display_df['Change %'].apply(lambda x: f"{x:+.2f}%")
-                st.dataframe(display_df, use_container_width=True)
-            
-            # Option to use filtered stocks
-            st.session_state.use_filtered = st.checkbox("Use these filtered stocks for trading", value=False)
-        
         st.markdown("---")
         
-        # Determine which symbols to use for trading
-        if st.session_state.use_filtered and st.session_state.filtered_stocks:
-            trading_symbols = st.session_state.filtered_stocks
-            st.info(f"📊 Trading with {len(trading_symbols)} filtered stocks")
-        else:
-            trading_symbols = SYMBOLS
+        # Option to use filtered stocks (checkbox in sidebar)
+        if st.session_state.filtered_stocks:
+            st.session_state.use_filtered = st.checkbox("📌 Use Filtered Stocks for Trading", value=st.session_state.use_filtered)
+            
+            if st.session_state.use_filtered:
+                st.info(f"✅ Trading with {len(st.session_state.filtered_stocks)} filtered stocks")
+            else:
+                st.info(f"📊 Trading with {len(SYMBOLS)} default stocks")
         
         if not st.session_state.auto_refresh:
             if st.button("🚀 Start Bot", type="primary", use_container_width=True):
@@ -493,27 +489,87 @@ def main():
             if st.button("⏹ Stop Bot", type="secondary", use_container_width=True):
                 st.session_state.auto_refresh = False
                 st.rerun()
-
+    
+    # --- MAIN PAGE CONTENT ---
+    
+    # Display Filtered Stocks on Main Page
+    if st.session_state.filtered_df is not None and not st.session_state.filtered_df.empty:
+        st.subheader("📊 NIFTY 200 Filtered Stocks")
+        st.markdown(f"**Criteria:** Change % {min_change}% to {max_change}% | LTP ₹{min_ltp} to ₹{max_ltp}")
+        
+        # Create metrics row
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Stocks Found", len(st.session_state.filtered_df))
+        with col2:
+            st.metric("Avg Change %", f"{st.session_state.filtered_df['Change %'].mean():.2f}%")
+        with col3:
+            st.metric("Max Change %", f"{st.session_state.filtered_df['Change %'].max():.2f}%")
+        with col4:
+            st.metric("Avg LTP", f"₹{st.session_state.filtered_df['LTP'].mean():,.2f}")
+        
+        # Display the table
+        display_df = st.session_state.filtered_df.copy()
+        display_df['LTP'] = display_df['LTP'].apply(lambda x: f"₹{x:,.2f}")
+        display_df['Change %'] = display_df['Change %'].apply(lambda x: f"{x:+.2f}%")
+        display_df['Volume'] = display_df['Volume'].apply(lambda x: f"{int(x):,}")
+        
+        st.dataframe(display_df, use_container_width=True, height=300)
+        st.markdown("---")
+    
+    # Bot Status and Signals
     if st.session_state.auto_refresh and selected_mode == "Live Trading":
         col1, col2, col3 = st.columns(3)
-        col1.metric("Cycle", st.session_state.refresh_counter)
-        col2.metric("Time", datetime.now().strftime('%H:%M:%S'))
-        col3.metric("Signals", len(st.session_state.signals))
+        col1.metric("Bot Status", "🟢 RUNNING")
+        col2.metric("Cycle", st.session_state.refresh_counter)
+        col3.metric("Time", datetime.now().strftime('%H:%M:%S'))
+        
+        # Show active trading symbols
+        trading_symbols = st.session_state.filtered_stocks if (st.session_state.use_filtered and st.session_state.filtered_stocks) else SYMBOLS
+        st.info(f"🎯 Monitoring {len(trading_symbols)} stocks for signals")
         
         progress_bar = st.progress(0)
         status_text = st.empty()
-        
-        # Use trading_symbols (either filtered or original)
-        trading_symbols = st.session_state.filtered_stocks if (st.session_state.use_filtered and st.session_state.filtered_stocks) else SYMBOLS
         
         new_sigs = run_bot_cycle(trading_symbols, timeframe, strategy, risk_amount, selected_mode, {}, update_interval, progress_bar, status_text)
         if new_sigs:
             st.session_state.signals.extend(new_sigs)
             send_bulk_telegram_alerts(new_sigs)
             st.balloons()
-            
+            st.success(f"🎯 {len(new_sigs)} New Signals Generated!")
+        
+        st.subheader(f"📋 Trading Signals ({len(st.session_state.signals)})")
         display_signals_table(st.session_state.signals)
         st.rerun()
+    
+    elif st.session_state.auto_refresh and selected_mode != "Live Trading":
+        st.warning("Backtest mode is not implemented yet. Please use Live Trading mode.")
+    
+    else:
+        # Display when bot is not running
+        if st.session_state.filtered_stocks:
+            st.info("✅ Click **Start Bot** to begin monitoring these stocks for trading signals")
+        else:
+            st.info("👈 **Get Started:** Click 'GET NIFTY 200 DATA' in sidebar to fetch stocks, then click 'Start Bot'")
+        
+        # Show existing signals if any
+        if st.session_state.signals:
+            st.subheader(f"📋 Previous Signals ({len(st.session_state.signals)})")
+            display_signals_table(st.session_state.signals)
+        
+        # Instructions
+        with st.expander("ℹ️ How to Use", expanded=False):
+            st.markdown("""
+            **Step 1:** Set filter criteria in sidebar (Change % and LTP)
+            
+            **Step 2:** Click **GET NIFTY 200 DATA** to fetch filtered stocks
+            
+            **Step 3:** Check **Use Filtered Stocks for Trading** (optional)
+            
+            **Step 4:** Click **Start Bot** to begin monitoring
+            
+            **Strategy:** Candle Breakout - First candle of the day sets reference, any breakout generates signal
+            """)
 
 if __name__ == "__main__":
     main()
