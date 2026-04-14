@@ -108,7 +108,7 @@ if 'filtered_df' not in st.session_state:
 if 'use_filtered' not in st.session_state:
     st.session_state.use_filtered = False
 if 'market_type' not in st.session_state:
-    st.session_state.market_type = "Gainers"  # Gainers or Losers
+    st.session_state.market_type = "Gainers"
 
 # Stock symbols
 SYMBOLS = ["BANKNIFTY", "NIFTY", "UPL", "INFY", "ULTRACEMCO", "RELIANCE", 
@@ -164,7 +164,8 @@ def fetch_nifty200_stocks():
                 except (ValueError, TypeError, KeyError):
                     continue
             
-            return pd.DataFrame(stocks_data)
+            df = pd.DataFrame(stocks_data)
+            return df
         
         return pd.DataFrame()
         
@@ -386,18 +387,6 @@ class CandleBreakoutStrategy:
                     break
         return signals
 
-class MovingAverageCrossStrategy:
-    def __init__(self, timeframe='15min', fast_ma=9, slow_ma=21, risk_amount=10000, mode="Live Trading"):
-        self.timeframe, self.fast_ma, self.slow_ma, self.risk_amount, self.mode = timeframe, fast_ma, slow_ma, risk_amount, mode
-    def analyze(self, df, symbol, date_tracker=None):
-        return None
-
-class RSIBreakoutStrategy:
-    def __init__(self, timeframe='15min', rsi_period=14, risk_amount=10000, mode="Live Trading"):
-        self.timeframe, self.rsi_period, self.risk_amount, self.mode = timeframe, rsi_period, risk_amount, mode
-    def analyze(self, df, symbol, date_tracker=None):
-        return None
-
 def fetch_data(symbol, interval, n_bars=100):
     try:
         tv = TvDatafeed()
@@ -456,21 +445,21 @@ def main():
             help="Choose Gainers for positive change % or Losers for negative change %"
         )
         
-        # Store market type in session state
+        # Update session state based on selection
         if market_type == "🏆 Gainers":
             st.session_state.market_type = "Gainers"
+            # Filter inputs for Gainers (positive values)
+            col1, col2 = st.columns(2)
+            with col1:
+                min_change = st.number_input("Min Change %", 0.0, 100.0, 2.0, 0.5, key="gainers_min")
+                max_change = st.number_input("Max Change %", 0.0, 100.0, 5.0, 0.5, key="gainers_max")
         else:
             st.session_state.market_type = "Losers"
-        
-        # Filter inputs
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.session_state.market_type == "Gainers":
-                min_change = st.number_input("Min Change %", 0.0, 100.0, 2.0, 0.5)
-                max_change = st.number_input("Max Change %", 0.0, 100.0, 5.0, 0.5)
-            else:
-                min_change = st.number_input("Min Change %", -100.0, 0.0, -5.0, 0.5)
-                max_change = st.number_input("Max Change %", -100.0, 0.0, -2.0, 0.5)
+            # Filter inputs for Losers (negative values)
+            col1, col2 = st.columns(2)
+            with col1:
+                min_change = st.number_input("Min Change %", -100.0, 0.0, -5.0, 0.5, key="losers_min")
+                max_change = st.number_input("Max Change %", -100.0, 0.0, -2.0, 0.5, key="losers_max")
         
         with col2:
             min_ltp = st.number_input("Min LTP (₹)", 0, 10000, 500, 100)
@@ -480,6 +469,11 @@ def main():
             with st.spinner(f"Fetching {st.session_state.market_type} from NSE..."):
                 nifty_df = fetch_nifty200_stocks()
                 if not nifty_df.empty:
+                    # Debug info
+                    st.write(f"Total stocks fetched: {len(nifty_df)}")
+                    st.write(f"Market Type: {st.session_state.market_type}")
+                    st.write(f"Change range: {min_change} to {max_change}")
+                    
                     # Apply filters based on Gainers or Losers
                     if st.session_state.market_type == "Gainers":
                         filtered = nifty_df[
@@ -490,6 +484,7 @@ def main():
                         ]
                         filtered = filtered.sort_values('Change %', ascending=False)
                     else:  # Losers
+                        # For losers, we want stocks with negative change %
                         filtered = nifty_df[
                             (nifty_df['Change %'] <= min_change) & 
                             (nifty_df['Change %'] >= max_change) & 
@@ -608,13 +603,17 @@ def main():
             st.markdown("""
             **Step 1:** Select **Gainers** 🏆 or **Losers** 📉 in sidebar
             
-            **Step 2:** Set filter criteria (Change % range and LTP range)
+            **Step 2:** Set filter criteria:
+            - For Gainers: Positive change % (e.g., 2% to 5%)
+            - For Losers: Negative change % (e.g., -5% to -2%)
             
-            **Step 3:** Click **GET NIFTY 200 DATA** to fetch filtered stocks
+            **Step 3:** Set LTP range (₹500 to ₹3000)
             
-            **Step 4:** Check **Use Filtered Stocks for Trading** (optional)
+            **Step 4:** Click **GET NIFTY 200 DATA** to fetch filtered stocks
             
-            **Step 5:** Click **Start Bot** to begin monitoring
+            **Step 5:** Check **Use Filtered Stocks for Trading** (optional)
+            
+            **Step 6:** Click **Start Bot** to begin monitoring
             
             **Strategy:** Candle Breakout - First candle of the day sets reference, any breakout generates signal
             """)
