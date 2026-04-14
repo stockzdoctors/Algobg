@@ -107,6 +107,8 @@ if 'filtered_df' not in st.session_state:
     st.session_state.filtered_df = pd.DataFrame()
 if 'use_filtered' not in st.session_state:
     st.session_state.use_filtered = False
+if 'market_type' not in st.session_state:
+    st.session_state.market_type = "Gainers"  # Gainers or Losers
 
 # Stock symbols
 SYMBOLS = ["BANKNIFTY", "NIFTY", "UPL", "INFY", "ULTRACEMCO", "RELIANCE", 
@@ -444,38 +446,81 @@ def main():
         update_interval = st.slider("Update Interval", 5, 60, 10)
         
         st.markdown("---")
-        st.subheader("📊 NIFTY 200 Filter")
+        st.subheader("📊 NIFTY 200 Screener")
         
-        min_change = st.number_input("Min Change %", 0.0, 100.0, 2.0, 0.5)
-        max_change = st.number_input("Max Change %", 0.0, 100.0, 5.0, 0.5)
-        min_ltp = st.number_input("Min LTP (₹)", 0, 10000, 500, 100)
-        max_ltp = st.number_input("Max LTP (₹)", 0, 50000, 3000, 100)
+        # --- NEW: Gainers/Losers Selection ---
+        market_type = st.radio(
+            "Select Market Type",
+            ["🏆 Gainers", "📉 Losers"],
+            horizontal=True,
+            help="Choose Gainers for positive change % or Losers for negative change %"
+        )
+        
+        # Store market type in session state
+        if market_type == "🏆 Gainers":
+            st.session_state.market_type = "Gainers"
+            change_label = "Change % (Positive)"
+            change_help = "Positive percentage change for gainers"
+        else:
+            st.session_state.market_type = "Losers"
+            change_label = "Change % (Negative)"
+            change_help = "Negative percentage change for losers"
+        
+        # Filter inputs
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.session_state.market_type == "Gainers":
+                min_change = st.number_input("Min Change %", 0.0, 100.0, 2.0, 0.5, help=change_help)
+                max_change = st.number_input("Max Change %", 0.0, 100.0, 5.0, 0.5, help=change_help)
+            else:
+                min_change = st.number_input("Min Change %", -100.0, 0.0, -5.0, 0.5, help=change_help)
+                max_change = st.number_input("Max Change %", -100.0, 0.0, -2.0, 0.5, help=change_help)
+        
+        with col2:
+            min_ltp = st.number_input("Min LTP (₹)", 0, 10000, 500, 100)
+            max_ltp = st.number_input("Max LTP (₹)", 0, 50000, 3000, 100)
         
         if st.button("🚀 GET NIFTY 200 DATA", type="primary", use_container_width=True):
-            with st.spinner("Fetching NIFTY 200 stocks from NSE..."):
+            with st.spinner(f"Fetching {st.session_state.market_type} from NSE..."):
                 nifty_df = fetch_nifty200_stocks()
                 if not nifty_df.empty:
-                    filtered = nifty_df[
-                        (nifty_df['Change %'] >= min_change) & 
-                        (nifty_df['Change %'] <= max_change) & 
-                        (nifty_df['LTP'] > min_ltp) & 
-                        (nifty_df['LTP'] < max_ltp)
-                    ]
+                    # Apply filters based on Gainers or Losers
+                    if st.session_state.market_type == "Gainers":
+                        filtered = nifty_df[
+                            (nifty_df['Change %'] >= min_change) & 
+                            (nifty_df['Change %'] <= max_change) & 
+                            (nifty_df['LTP'] > min_ltp) & 
+                            (nifty_df['LTP'] < max_ltp)
+                        ]
+                    else:  # Losers
+                        filtered = nifty_df[
+                            (nifty_df['Change %'] <= min_change) & 
+                            (nifty_df['Change %'] >= max_change) & 
+                            (nifty_df['LTP'] > min_ltp) & 
+                            (nifty_df['LTP'] < max_ltp)
+                        ]
+                    
+                    # Sort appropriately
+                    if st.session_state.market_type == "Gainers":
+                        filtered = filtered.sort_values('Change %', ascending=False)
+                    else:
+                        filtered = filtered.sort_values('Change %', ascending=True)
+                    
                     st.session_state.filtered_stocks = filtered['Symbol'].tolist()
                     st.session_state.filtered_df = filtered
-                    st.success(f"✅ Found {len(st.session_state.filtered_stocks)} stocks!")
+                    st.success(f"✅ Found {len(st.session_state.filtered_stocks)} {st.session_state.market_type}!")
                     st.rerun()
                 else:
                     st.error("Failed to fetch data")
         
         st.markdown("---")
         
-        # Option to use filtered stocks (checkbox in sidebar)
+        # Option to use filtered stocks
         if st.session_state.filtered_stocks:
             st.session_state.use_filtered = st.checkbox("📌 Use Filtered Stocks for Trading", value=st.session_state.use_filtered)
             
             if st.session_state.use_filtered:
-                st.info(f"✅ Trading with {len(st.session_state.filtered_stocks)} filtered stocks")
+                st.info(f"✅ Trading with {len(st.session_state.filtered_stocks)} {st.session_state.market_type}")
             else:
                 st.info(f"📊 Trading with {len(SYMBOLS)} default stocks")
         
@@ -494,27 +539,48 @@ def main():
     
     # Display Filtered Stocks on Main Page
     if st.session_state.filtered_df is not None and not st.session_state.filtered_df.empty:
-        st.subheader("📊 NIFTY 200 Filtered Stocks")
-        st.markdown(f"**Criteria:** Change % {min_change}% to {max_change}% | LTP ₹{min_ltp} to ₹{max_ltp}")
+        # Set title based on Gainers/Losers
+        if st.session_state.market_type == "Gainers":
+            st.subheader(f"🏆 NIFTY 200 {st.session_state.market_type}")
+            st.markdown(f"**Criteria:** Change % {min_change}% to {max_change}% | LTP ₹{min_ltp} to ₹{max_ltp}")
+        else:
+            st.subheader(f"📉 NIFTY 200 {st.session_state.market_type}")
+            st.markdown(f"**Criteria:** Change % {max_change}% to {min_change}% | LTP ₹{min_ltp} to ₹{max_ltp}")
         
         # Create metrics row
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("Total Stocks Found", len(st.session_state.filtered_df))
+            st.metric(f"Total {st.session_state.market_type}", len(st.session_state.filtered_df))
         with col2:
-            st.metric("Avg Change %", f"{st.session_state.filtered_df['Change %'].mean():.2f}%")
+            avg_change = st.session_state.filtered_df['Change %'].mean()
+            change_color = "🟢" if avg_change > 0 else "🔴"
+            st.metric("Avg Change %", f"{change_color} {avg_change:.2f}%")
         with col3:
-            st.metric("Max Change %", f"{st.session_state.filtered_df['Change %'].max():.2f}%")
+            max_change_val = st.session_state.filtered_df['Change %'].max() if st.session_state.market_type == "Gainers" else st.session_state.filtered_df['Change %'].min()
+            st.metric(f"Max {st.session_state.market_type}", f"{max_change_val:+.2f}%")
         with col4:
             st.metric("Avg LTP", f"₹{st.session_state.filtered_df['LTP'].mean():,.2f}")
         
-        # Display the table
+        # Display the table with color coding
         display_df = st.session_state.filtered_df.copy()
         display_df['LTP'] = display_df['LTP'].apply(lambda x: f"₹{x:,.2f}")
+        
+        # Color code change percentage
+        def color_change(val):
+            if isinstance(val, str):
+                val = float(val.replace('%', '').replace('+', ''))
+            if val > 0:
+                return 'color: #00ff00'
+            elif val < 0:
+                return 'color: #ff0000'
+            return ''
+        
         display_df['Change %'] = display_df['Change %'].apply(lambda x: f"{x:+.2f}%")
         display_df['Volume'] = display_df['Volume'].apply(lambda x: f"{int(x):,}")
         
-        st.dataframe(display_df, use_container_width=True, height=300)
+        # Apply styling
+        styled_df = display_df.style.applymap(color_change, subset=['Change %'])
+        st.dataframe(styled_df, use_container_width=True, height=300)
         st.markdown("---")
     
     # Bot Status and Signals
@@ -526,7 +592,8 @@ def main():
         
         # Show active trading symbols
         trading_symbols = st.session_state.filtered_stocks if (st.session_state.use_filtered and st.session_state.filtered_stocks) else SYMBOLS
-        st.info(f"🎯 Monitoring {len(trading_symbols)} stocks for signals")
+        market_emoji = "🏆" if st.session_state.market_type == "Gainers" else "📉"
+        st.info(f"{market_emoji} Monitoring {len(trading_symbols)} {st.session_state.market_type} stocks for signals")
         
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -548,9 +615,9 @@ def main():
     else:
         # Display when bot is not running
         if st.session_state.filtered_stocks:
-            st.info("✅ Click **Start Bot** to begin monitoring these stocks for trading signals")
+            st.info(f"✅ Click **Start Bot** to begin monitoring these {st.session_state.market_type} stocks for trading signals")
         else:
-            st.info("👈 **Get Started:** Click 'GET NIFTY 200 DATA' in sidebar to fetch stocks, then click 'Start Bot'")
+            st.info("👈 **Get Started:** Select Gainers/Losers, set filters, click 'GET NIFTY 200 DATA', then click 'Start Bot'")
         
         # Show existing signals if any
         if st.session_state.signals:
@@ -560,13 +627,15 @@ def main():
         # Instructions
         with st.expander("ℹ️ How to Use", expanded=False):
             st.markdown("""
-            **Step 1:** Set filter criteria in sidebar (Change % and LTP)
+            **Step 1:** Select **Gainers** 🏆 or **Losers** 📉 in sidebar
             
-            **Step 2:** Click **GET NIFTY 200 DATA** to fetch filtered stocks
+            **Step 2:** Set filter criteria (Change % range and LTP range)
             
-            **Step 3:** Check **Use Filtered Stocks for Trading** (optional)
+            **Step 3:** Click **GET NIFTY 200 DATA** to fetch filtered stocks
             
-            **Step 4:** Click **Start Bot** to begin monitoring
+            **Step 4:** Check **Use Filtered Stocks for Trading** (optional)
+            
+            **Step 5:** Click **Start Bot** to begin monitoring
             
             **Strategy:** Candle Breakout - First candle of the day sets reference, any breakout generates signal
             """)
