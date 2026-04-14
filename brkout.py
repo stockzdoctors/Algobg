@@ -101,10 +101,8 @@ if 'bot_thread' not in st.session_state:
     st.session_state.bot_thread = None
 if 'stop_bot' not in st.session_state:
     st.session_state.stop_bot = False
-if 'dynamic_symbols' not in st.session_state:
-    st.session_state.dynamic_symbols = []
 
-# Stock symbols (Default list)
+# Stock symbols
 SYMBOLS = ["BANKNIFTY", "NIFTY", "UPL", "INFY", "ULTRACEMCO", "RELIANCE", 
            "ASIANPAINT", "ABB", "ACC", "LT", "HDFCBANK"]
 
@@ -118,40 +116,53 @@ No trading recommendations provided.
 Always consult registered experts.
 ━━━━━━━━━━━━━━━━━━"""
 
+# --- NEW: NSE NIFTY 200 DATA FETCHING FUNCTION (ADDED) ---
 @st.cache_data(ttl=300)
-def fetch_nifty200_stocks_dynamic():
-    """Step 1: Connect NSE India and get Nifty 200 Gainers freshly"""
+def fetch_nifty200_stocks():
+    """Fetch NIFTY 200 stocks from NSE India"""
     try:
         nse_url = "https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20200"
+        
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             'Accept': 'application/json, text/plain, */*',
             'Accept-Language': 'en-US,en;q=0.9',
             'Referer': 'https://www.nseindia.com/',
+            'X-Requested-With': 'XMLHttpRequest'
         }
+        
         session = requests.Session()
-        session.get("https://www.nseindia.com", headers=headers, timeout=10)
-        response = session.get(nse_url, headers=headers, timeout=15)
+        session.headers.update(headers)
+        session.get("https://www.nseindia.com", timeout=10)
+        time.sleep(1)
+        
+        response = session.get(nse_url, timeout=15)
         
         if response.status_code == 200:
             data = response.json()
             stocks_data = []
+            
             for item in data.get('data', []):
                 try:
-                    symbol = item.get('symbol', '')
                     ltp = float(item.get('lastPrice', 0))
                     change_percent = float(item.get('pChange', 0))
-                    volume = float(item.get('totalTradedVolume', 0))
                     
-                    # USER FILTER: LTP 500-3000, Change 4-6%
-                    if 500 < ltp < 3000 and 4.0 < change_percent < 6.0:
-                        stocks_data.append(symbol)
-                except: continue
-            return stocks_data
-        return []
+                    stocks_data.append({
+                        'Symbol': item.get('symbol', ''),
+                        'LTP': ltp,
+                        'Change %': change_percent,
+                        'Volume': item.get('totalTradedVolume', 0)
+                    })
+                except (ValueError, TypeError, KeyError):
+                    continue
+            
+            return pd.DataFrame(stocks_data)
+        
+        return pd.DataFrame()
+        
     except Exception as e:
-        st.error(f"NSE Error: {str(e)}")
-        return []
+        st.error(f"Error fetching NSE data: {str(e)}")
+        return pd.DataFrame()
 
 def send_telegram_message_sync(message):
     """Send Telegram message using simple HTTP Request (More stable for Cloud)"""
@@ -301,13 +312,16 @@ class CandleBreakoutStrategy:
         signals = []
         df.index = pd.to_datetime(df.index)
         today_date = datetime.now().date()
+        
+        # Filter only Today's Data
         today_df = df[df.index.date == today_date]
         
         if len(today_df) < 1:
             return None
 
-        # Persistent logic: Find first 9:15 candle of today
+        # --- PERSISTENT LOGIC: Find the VERY FIRST candle of today ---
         reference_candle = today_df.iloc[0]
+        reference_idx = 0
         
         high_915 = round_to_2_decimals(reference_candle['high'])
         low_915 = round_to_2_decimals(reference_candle['low'])
@@ -318,11 +332,12 @@ class CandleBreakoutStrategy:
             if date_tracker.get(key, False):
                 return None
         
-        # Scans all candles from today to catch breakouts that already happened
+        # Check every candle from the 2nd candle onwards to find a breakout
         for i in range(1, len(today_df)):
             current_candle = today_df.iloc[i]
             current_high = round_to_2_decimals(current_candle['high'])
             current_low = round_to_2_decimals(current_candle['low'])
+            current_close = round_to_2_decimals(current_candle['close'])
             
             # BUY Condition
             if current_high > high_915:
@@ -364,32 +379,31 @@ class CandleBreakoutStrategy:
         return signals
 
 class MovingAverageCrossStrategy:
-    """Strategy 2: Moving Average Crossover Strategy"""
     def __init__(self, timeframe='15min', fast_ma=9, slow_ma=21, risk_amount=10000, mode="Live Trading"):
         self.timeframe, self.fast_ma, self.slow_ma, self.risk_amount, self.mode = timeframe, fast_ma, slow_ma, risk_amount, mode
     def analyze(self, df, symbol, date_tracker=None):
         return None
 
 class RSIBreakoutStrategy:
-    """Strategy 3: RSI + Breakout Strategy"""
     def __init__(self, timeframe='15min', rsi_period=14, risk_amount=10000, mode="Live Trading"):
         self.timeframe, self.rsi_period, self.risk_amount, self.mode = timeframe, rsi_period, risk_amount, mode
     def analyze(self, df, symbol, date_tracker=None):
         return None
 
-def fetch_data(symbol, timeframe, n_bars=100):
-    """Fetch historical data from TradingView"""
+def fetch_data(symbol, interval, n_bars=100):
     try:
         tv = TvDatafeed()
-        interval_map = {'5min': Interval.in_5_minute, '15min': Interval.in_15_minute, 'daily': Interval.in_daily}
-        tv_interval = interval_map.get(timeframe, Interval.in_15_minute)
-        return tv.get_hist(symbol=symbol, exchange="NSE", interval=tv_interval, n_bars=n_bars)
+        inv_map = {'5min': Interval.in_5_minute, '15min': Interval.in_15_minute, 'daily': Interval.in_daily}
+        return tv.get_hist(symbol=symbol, exchange="NSE", interval=inv_map.get(interval, Interval.in_15_minute), n_bars=n_bars)
     except: return None
 
-def check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amount, mode):
-    """Check for new signals and return only new ones"""
+def check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amount, mode, existing_signals, **strategy_params):
     all_new_signals = []
-    strategy = CandleBreakoutStrategy(timeframe, risk_amount, mode)
+    if strategy_name == "Candle Breakout Strategy":
+        strategy = CandleBreakoutStrategy(timeframe, risk_amount, mode)
+    else:
+        strategy = CandleBreakoutStrategy(timeframe, risk_amount, mode)
+    
     for symbol in selected_symbols:
         data = fetch_data(symbol, timeframe)
         if data is not None:
@@ -397,18 +411,16 @@ def check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amoun
             if signals: all_new_signals.extend(signals)
     return all_new_signals
 
-def run_bot_cycle(selected_symbols, timeframe, strategy, risk_amount, selected_mode, update_interval, progress_bar, status_text):
-    """Run one cycle of bot operations"""
+def run_bot_cycle(selected_symbols, timeframe, strategy, risk_amount, selected_mode, strategy_params, refresh_interval, progress_bar, status_text):
     st.session_state.refresh_counter += 1
     st.session_state.last_check_time = datetime.now()
-    for i in range(update_interval, 0, -1):
-        progress_bar.progress((update_interval - i) / update_interval)
+    for i in range(refresh_interval, 0, -1):
+        progress_bar.progress((refresh_interval - i) / refresh_interval)
         status_text.text(f"🔄 Next check in {i} seconds... (Cycle: {st.session_state.refresh_counter})")
         time.sleep(1)
-    return check_for_new_signals(selected_symbols, timeframe, strategy, risk_amount, selected_mode)
+    return check_for_new_signals(selected_symbols, timeframe, strategy, risk_amount, selected_mode, st.session_state.signals, **strategy_params)
 
-def display_signals_table(signals, title="Trading Signals"):
-    """Display signals in a formatted table"""
+def display_signals_table(signals, title="Signals"):
     if signals:
         df = pd.DataFrame(signals)
         st.dataframe(df.style.map(lambda x: 'background-color: #00ff00; color: black' if x == 'BUY' else ('background-color: #ff0000; color: white' if x == 'SELL' else ''), subset=['SIGNAL']), use_container_width=True)
@@ -417,46 +429,66 @@ def main():
     st.title("📈 Algorithmic Trading System")
     st.markdown("---")
     with st.sidebar:
-        st.header("⚙️ Configuration")
-        selected_mode = st.radio("Select Mode", options=["Live Trading", "Backtest (Last 2 Days)"], index=0)
-        st.session_state.mode = selected_mode
+        selected_mode = st.radio("Select Mode", ["Live Trading", "Backtest (Last 2 Days)"])
         risk_amount = st.number_input("Risk per Trade", 1000, 1000000, 10000)
-        timeframe = st.selectbox("Timeframe", ['15min', '5min'], index=0)
-        strategy = st.selectbox("Select Strategy", ["Candle Breakout Strategy", "MA Crossover Strategy", "RSI Breakout Strategy"], index=0)
-        update_interval = st.slider("Update Interval (seconds)", 5, 60, 60)
+        timeframe = st.selectbox("Timeframe", ['15min', '5min'])
+        strategy = st.selectbox("Strategy", ["Candle Breakout Strategy"])
+        update_interval = st.slider("Update Interval", 5, 60, 10)
         
-        # Step 1: GET DATA
-        if st.button("🚀 GET DATA"):
-            with st.spinner("Fetching Nifty 200 Gainers with 500-3000 LTP & 4-6% Change..."):
-                st.session_state.dynamic_symbols = fetch_nifty200_stocks_dynamic()
-                if st.session_state.dynamic_symbols:
-                    st.success(f"✅ Found {len(st.session_state.dynamic_symbols)} Stocks!")
+        # --- NEW: NIFTY 200 GET DATA BUTTON (ADDED) ---
+        st.markdown("---")
+        st.subheader("📊 NIFTY 200 Screener")
+        min_change = st.number_input("Min Change %", 0.0, 100.0, 2.0, 0.5)
+        max_change = st.number_input("Max Change %", 0.0, 100.0, 5.0, 0.5)
+        min_ltp = st.number_input("Min LTP (₹)", 0, 10000, 500, 100)
+        max_ltp = st.number_input("Max LTP (₹)", 0, 50000, 3000, 100)
+        
+        if st.button("🚀 GET NIFTY 200 DATA", type="primary", use_container_width=True):
+            with st.spinner("Fetching NIFTY 200 stocks..."):
+                nifty_df = fetch_nifty200_stocks()
+                if not nifty_df.empty:
+                    filtered = nifty_df[
+                        (nifty_df['Change %'] >= min_change) & 
+                        (nifty_df['Change %'] <= max_change) & 
+                        (nifty_df['LTP'] > min_ltp) & 
+                        (nifty_df['LTP'] < max_ltp)
+                    ]
+                    st.session_state['nifty_filtered'] = filtered
+                    st.success(f"✅ Found {len(filtered)} stocks!")
                 else:
-                    st.warning("No stocks match the LTP 500-3000 & 4-6% criteria.")
-
-        # Step 2: START BOT
-        if st.button("🚀 Start Bot" if not st.session_state.auto_refresh else "⏹ Stop Bot"):
-            if not st.session_state.dynamic_symbols:
-                st.error("Please click 'GET DATA' first!")
-            else:
-                st.session_state.auto_refresh = not st.session_state.auto_refresh
-                st.rerun()
+                    st.error("Failed to fetch data")
         
-        if st.button("🗑️ Clear Signals", use_container_width=True):
-            st.session_state.signals = []
-            st.session_state.active_trades = []
-            st.success("Signals cleared!")
+        # Display filtered stocks if available
+        if 'nifty_filtered' in st.session_state and not st.session_state['nifty_filtered'].empty:
+            with st.expander("📋 Filtered NIFTY 200 Stocks", expanded=True):
+                display_df = st.session_state['nifty_filtered'].copy()
+                display_df['LTP'] = display_df['LTP'].apply(lambda x: f"₹{x:,.2f}")
+                display_df['Change %'] = display_df['Change %'].apply(lambda x: f"{x:+.2f}%")
+                st.dataframe(display_df, use_container_width=True)
+        
+        st.markdown("---")
+        
+        if not st.session_state.auto_refresh:
+            if st.button("🚀 Start Bot", type="primary", use_container_width=True):
+                st.session_state.auto_refresh = True
+                st.session_state.signals = []
+                st.session_state.refresh_counter = 0
+                st.rerun()
+        else:
+            if st.button("⏹ Stop Bot", type="secondary", use_container_width=True):
+                st.session_state.auto_refresh = False
+                st.rerun()
 
-    if st.session_state.auto_refresh:
+    if st.session_state.auto_refresh and selected_mode == "Live Trading":
         col1, col2, col3 = st.columns(3)
         col1.metric("Cycle", st.session_state.refresh_counter)
         col2.metric("Time", datetime.now().strftime('%H:%M:%S'))
-        col3.metric("Filtered Stocks", len(st.session_state.dynamic_symbols))
+        col3.metric("Signals", len(st.session_state.signals))
         
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        new_sigs = run_bot_cycle(st.session_state.dynamic_symbols, timeframe, strategy, risk_amount, selected_mode, update_interval, progress_bar, status_text)
+        new_sigs = run_bot_cycle(SYMBOLS, timeframe, strategy, risk_amount, selected_mode, {}, update_interval, progress_bar, status_text)
         if new_sigs:
             st.session_state.signals.extend(new_sigs)
             send_bulk_telegram_alerts(new_sigs)
