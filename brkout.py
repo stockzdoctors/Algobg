@@ -448,7 +448,7 @@ def main():
         st.markdown("---")
         st.subheader("📊 NIFTY 200 Screener")
         
-        # --- NEW: Gainers/Losers Selection ---
+        # Gainers/Losers Selection
         market_type = st.radio(
             "Select Market Type",
             ["🏆 Gainers", "📉 Losers"],
@@ -459,22 +459,18 @@ def main():
         # Store market type in session state
         if market_type == "🏆 Gainers":
             st.session_state.market_type = "Gainers"
-            change_label = "Change % (Positive)"
-            change_help = "Positive percentage change for gainers"
         else:
             st.session_state.market_type = "Losers"
-            change_label = "Change % (Negative)"
-            change_help = "Negative percentage change for losers"
         
         # Filter inputs
         col1, col2 = st.columns(2)
         with col1:
             if st.session_state.market_type == "Gainers":
-                min_change = st.number_input("Min Change %", 0.0, 100.0, 2.0, 0.5, help=change_help)
-                max_change = st.number_input("Max Change %", 0.0, 100.0, 5.0, 0.5, help=change_help)
+                min_change = st.number_input("Min Change %", 0.0, 100.0, 2.0, 0.5)
+                max_change = st.number_input("Max Change %", 0.0, 100.0, 5.0, 0.5)
             else:
-                min_change = st.number_input("Min Change %", -100.0, 0.0, -5.0, 0.5, help=change_help)
-                max_change = st.number_input("Max Change %", -100.0, 0.0, -2.0, 0.5, help=change_help)
+                min_change = st.number_input("Min Change %", -100.0, 0.0, -5.0, 0.5)
+                max_change = st.number_input("Max Change %", -100.0, 0.0, -2.0, 0.5)
         
         with col2:
             min_ltp = st.number_input("Min LTP (₹)", 0, 10000, 500, 100)
@@ -492,6 +488,7 @@ def main():
                             (nifty_df['LTP'] > min_ltp) & 
                             (nifty_df['LTP'] < max_ltp)
                         ]
+                        filtered = filtered.sort_values('Change %', ascending=False)
                     else:  # Losers
                         filtered = nifty_df[
                             (nifty_df['Change %'] <= min_change) & 
@@ -499,11 +496,6 @@ def main():
                             (nifty_df['LTP'] > min_ltp) & 
                             (nifty_df['LTP'] < max_ltp)
                         ]
-                    
-                    # Sort appropriately
-                    if st.session_state.market_type == "Gainers":
-                        filtered = filtered.sort_values('Change %', ascending=False)
-                    else:
                         filtered = filtered.sort_values('Change %', ascending=True)
                     
                     st.session_state.filtered_stocks = filtered['Symbol'].tolist()
@@ -542,10 +534,8 @@ def main():
         # Set title based on Gainers/Losers
         if st.session_state.market_type == "Gainers":
             st.subheader(f"🏆 NIFTY 200 {st.session_state.market_type}")
-            st.markdown(f"**Criteria:** Change % {min_change}% to {max_change}% | LTP ₹{min_ltp} to ₹{max_ltp}")
         else:
             st.subheader(f"📉 NIFTY 200 {st.session_state.market_type}")
-            st.markdown(f"**Criteria:** Change % {max_change}% to {min_change}% | LTP ₹{min_ltp} to ₹{max_ltp}")
         
         # Create metrics row
         col1, col2, col3, col4 = st.columns(4)
@@ -553,34 +543,23 @@ def main():
             st.metric(f"Total {st.session_state.market_type}", len(st.session_state.filtered_df))
         with col2:
             avg_change = st.session_state.filtered_df['Change %'].mean()
-            change_color = "🟢" if avg_change > 0 else "🔴"
-            st.metric("Avg Change %", f"{change_color} {avg_change:.2f}%")
+            st.metric("Avg Change %", f"{avg_change:+.2f}%")
         with col3:
-            max_change_val = st.session_state.filtered_df['Change %'].max() if st.session_state.market_type == "Gainers" else st.session_state.filtered_df['Change %'].min()
-            st.metric(f"Max {st.session_state.market_type}", f"{max_change_val:+.2f}%")
+            if st.session_state.market_type == "Gainers":
+                max_change_val = st.session_state.filtered_df['Change %'].max()
+            else:
+                max_change_val = st.session_state.filtered_df['Change %'].min()
+            st.metric(f"Top {st.session_state.market_type}", f"{max_change_val:+.2f}%")
         with col4:
             st.metric("Avg LTP", f"₹{st.session_state.filtered_df['LTP'].mean():,.2f}")
         
-        # Display the table with color coding
+        # Display the table
         display_df = st.session_state.filtered_df.copy()
         display_df['LTP'] = display_df['LTP'].apply(lambda x: f"₹{x:,.2f}")
-        
-        # Color code change percentage
-        def color_change(val):
-            if isinstance(val, str):
-                val = float(val.replace('%', '').replace('+', ''))
-            if val > 0:
-                return 'color: #00ff00'
-            elif val < 0:
-                return 'color: #ff0000'
-            return ''
-        
         display_df['Change %'] = display_df['Change %'].apply(lambda x: f"{x:+.2f}%")
         display_df['Volume'] = display_df['Volume'].apply(lambda x: f"{int(x):,}")
         
-        # Apply styling
-        styled_df = display_df.style.applymap(color_change, subset=['Change %'])
-        st.dataframe(styled_df, use_container_width=True, height=300)
+        st.dataframe(display_df, use_container_width=True, height=300)
         st.markdown("---")
     
     # Bot Status and Signals
