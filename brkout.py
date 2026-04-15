@@ -13,7 +13,7 @@ from telegram import Bot
 from telegram.error import TelegramError
 import threading
 import requests
-import json
+import yfinance as yf
 warnings.filterwarnings('ignore')
 
 # --- REMOVE ALL STREAMLIT & GITHUB BRANDING ---
@@ -112,9 +112,21 @@ if 'use_filtered' not in st.session_state:
 if 'market_type' not in st.session_state:
     st.session_state.market_type = "Gainers"
 
-# Stock symbols
-SYMBOLS = ["BANKNIFTY", "NIFTY", "UPL", "INFY", "ULTRACEMCO", "RELIANCE", 
-           "ASIANPAINT", "ABB", "ACC", "LT", "HDFCBANK"]
+# Stock symbols (NSE symbols with .NS suffix for Yahoo Finance)
+SYMBOLS = ["BANKNIFTY", "NIFTY", "UPL.NS", "INFY.NS", "ULTRACEMCO.NS", "RELIANCE.NS", 
+           "ASIANPAINT.NS", "ABB.NS", "ACC.NS", "LT.NS", "HDFCBANK.NS"]
+
+# NIFTY 200 stocks list (top 50 for performance)
+NIFTY_200_STOCKS = [
+    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "HINDUNILVR.NS", "ICICIBANK.NS",
+    "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "KOTAKBANK.NS", "BAJFINANCE.NS", "WIPRO.NS",
+    "AXISBANK.NS", "LT.NS", "SUNPHARMA.NS", "TITAN.NS", "MARUTI.NS", "ULTRACEMCO.NS",
+    "HCLTECH.NS", "ASIANPAINT.NS", "NESTLEIND.NS", "TECHM.NS", "JSWSTEEL.NS", "POWERGRID.NS",
+    "NTPC.NS", "M&M.NS", "BAJAJFINSV.NS", "TATAMOTORS.NS", "TATASTEEL.NS", "HDFC.NS",
+    "INDUSINDBK.NS", "ONGC.NS", "BRITANNIA.NS", "GRASIM.NS", "DIVISLAB.NS", "DRREDDY.NS",
+    "HDFCLIFE.NS", "SBILIFE.NS", "CIPLA.NS", "UPL.NS", "ADANIPORTS.NS", "SHREECEM.NS",
+    "EICHERMOT.NS", "BPCL.NS", "COALINDIA.NS", "HEROMOTOCO.NS", "BAJAJ-AUTO.NS", "TATACONSUM.NS"
+]
 
 # Simple disclaimer for Telegram
 DISCLAIMER = """
@@ -126,90 +138,113 @@ No trading recommendations provided.
 Always consult registered experts.
 ━━━━━━━━━━━━━━━━━━"""
 
-# --- NSE NIFTY 200 FETCH FUNCTION WITH COOKIES ---
-def get_nse_cookies():
-    """Get fresh cookies from NSE"""
-    try:
-        session = requests.Session()
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
-        }
-        session.headers.update(headers)
-        response = session.get('https://www.nseindia.com', timeout=10)
-        time.sleep(2)
-        return session
-    except Exception as e:
-        st.error(f"Error getting NSE session: {str(e)}")
-        return None
-
+# --- NIFTY 200 FETCH FUNCTION USING YAHOO FINANCE ---
 @st.cache_data(ttl=300)
 def fetch_nifty200_stocks():
-    """Fetch NIFTY 200 stocks from NSE India with proper cookies"""
+    """Fetch NIFTY 200 stocks data using Yahoo Finance"""
     try:
-        # Get fresh session with cookies
-        session = get_nse_cookies()
-        if not session:
-            return pd.DataFrame()
+        stocks_data = []
+        progress_bar = st.progress(0)
+        status_text = st.empty()
         
-        # Now fetch the API data
-        nse_url = "https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20200"
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': 'https://www.nseindia.com/',
-            'X-Requested-With': 'XMLHttpRequest',
-            'Origin': 'https://www.nseindia.com',
-            'Connection': 'keep-alive'
-        }
-        
-        session.headers.update(headers)
-        
-        # Add delay to mimic human behavior
-        time.sleep(1)
-        
-        response = session.get(nse_url, timeout=15)
-        
-        if response.status_code == 200:
-            data = response.json()
-            stocks_data = []
+        for idx, symbol in enumerate(NIFTY_200_STOCKS):
+            status_text.text(f"Fetching data for {symbol}... ({idx+1}/{len(NIFTY_200_STOCKS)})")
+            progress_bar.progress((idx + 1) / len(NIFTY_200_STOCKS))
             
-            for item in data.get('data', []):
-                try:
-                    ltp = float(item.get('lastPrice', 0))
-                    change_percent = float(item.get('pChange', 0))
-                    
-                    stocks_data.append({
-                        'Symbol': item.get('symbol', ''),
-                        'LTP': ltp,
-                        'Change %': change_percent,
-                        'Volume': item.get('totalTradedVolume', 0)
-                    })
-                except (ValueError, TypeError, KeyError):
-                    continue
-            
-            df = pd.DataFrame(stocks_data)
-            
-            # Close the session
-            session.close()
-            
-            return df
+            try:
+                # Fetch stock data from Yahoo Finance
+                ticker = yf.Ticker(symbol)
+                info = ticker.info
+                
+                # Get current price and change percentage
+                current_price = info.get('regularMarketPrice', info.get('currentPrice', 0))
+                previous_close = info.get('regularMarketPreviousClose', info.get('previousClose', 0))
+                
+                if current_price and previous_close and previous_close > 0:
+                    change_percent = ((current_price - previous_close) / previous_close) * 100
+                else:
+                    change_percent = 0
+                
+                # Get volume
+                volume = info.get('regularMarketVolume', info.get('volume', 0))
+                
+                # Clean symbol name (remove .NS)
+                clean_symbol = symbol.replace('.NS', '')
+                
+                stocks_data.append({
+                    'Symbol': clean_symbol,
+                    'LTP': round(current_price, 2),
+                    'Change %': round(change_percent, 2),
+                    'Volume': volume
+                })
+                
+                # Small delay to avoid rate limiting
+                time.sleep(0.1)
+                
+            except Exception as e:
+                st.warning(f"Could not fetch data for {symbol}: {str(e)}")
+                continue
         
-        session.close()
-        return pd.DataFrame()
+        progress_bar.empty()
+        status_text.empty()
+        
+        df = pd.DataFrame(stocks_data)
+        return df
         
     except Exception as e:
         st.error(f"Error fetching NSE data: {str(e)}")
         return pd.DataFrame()
 
+# Alternative function to get pre-defined filtered stocks
+@st.cache_data(ttl=300)
+def get_market_movers(market_type="Gainers", limit=50):
+    """Get top gainers/losers from NSE using Yahoo Finance"""
+    try:
+        stocks_data = []
+        
+        for symbol in NIFTY_200_STOCKS[:limit]:
+            try:
+                ticker = yf.Ticker(symbol)
+                info = ticker.info
+                
+                current_price = info.get('regularMarketPrice', info.get('currentPrice', 0))
+                previous_close = info.get('regularMarketPreviousClose', info.get('previousClose', 0))
+                
+                if current_price and previous_close and previous_close > 0:
+                    change_percent = ((current_price - previous_close) / previous_close) * 100
+                else:
+                    change_percent = 0
+                
+                volume = info.get('regularMarketVolume', info.get('volume', 0))
+                clean_symbol = symbol.replace('.NS', '')
+                
+                stocks_data.append({
+                    'Symbol': clean_symbol,
+                    'LTP': round(current_price, 2),
+                    'Change %': round(change_percent, 2),
+                    'Volume': volume
+                })
+                
+                time.sleep(0.1)
+                
+            except:
+                continue
+        
+        df = pd.DataFrame(stocks_data)
+        
+        if market_type == "Gainers":
+            df = df.sort_values('Change %', ascending=False)
+        else:
+            df = df.sort_values('Change %', ascending=True)
+        
+        return df
+        
+    except Exception as e:
+        st.error(f"Error fetching market data: {str(e)}")
+        return pd.DataFrame()
+
 def send_telegram_message_sync(message):
-    """Send Telegram message using simple HTTP Request (More stable for Cloud)"""
+    """Send Telegram message using simple HTTP Request"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {
@@ -341,7 +376,7 @@ def round_to_2_decimals(value):
     return round(float(value), 2)
 
 class CandleBreakoutStrategy:
-    """Strategy: 9:15 reference, any future candle breakout, one signal per day"""
+    """Strategy: First candle reference, any future candle breakout, one signal per day"""
     
     def __init__(self, timeframe='15min', risk_amount=10000, mode="Live Trading"):
         self.timeframe = timeframe
@@ -363,9 +398,8 @@ class CandleBreakoutStrategy:
         if len(today_df) < 1:
             return None
 
-        # --- PERSISTENT LOGIC: Find the VERY FIRST candle of today ---
+        # Find the VERY FIRST candle of today
         reference_candle = today_df.iloc[0]
-        reference_idx = 0
         
         high_915 = round_to_2_decimals(reference_candle['high'])
         low_915 = round_to_2_decimals(reference_candle['low'])
@@ -376,12 +410,11 @@ class CandleBreakoutStrategy:
             if date_tracker.get(key, False):
                 return None
         
-        # Check every candle from the 2nd candle onwards to find a breakout
+        # Check every candle from the 2nd candle onwards
         for i in range(1, len(today_df)):
             current_candle = today_df.iloc[i]
             current_high = round_to_2_decimals(current_candle['high'])
             current_low = round_to_2_decimals(current_candle['low'])
-            current_close = round_to_2_decimals(current_candle['close'])
             
             # BUY Condition
             if current_high > high_915:
@@ -389,16 +422,26 @@ class CandleBreakoutStrategy:
                 stop_loss = low_915
                 risk = round_to_2_decimals(entry - stop_loss)
                 if risk > 0:
-                    quantity = int(self.risk_amount / risk)
+                    quantity = max(1, int(self.risk_amount / risk))
                     signal = {
-                        'DATE': date_str, 'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'),
-                        'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 'SYMBOL': symbol,
-                        'SIGNAL': 'BUY', 'ENTRY': entry, 'QUANTITY': quantity,
-                        'STOPLOSS': stop_loss, 'T1': round_to_2_decimals(entry + risk),
-                        'T2': round_to_2_decimals(entry + risk * 2), 'T3': round_to_2_decimals(entry + risk * 3),
-                        'VOLUME': int(current_candle['volume']), 'T1_HIT': False, 'T2_HIT': False, 'T3_HIT': False
+                        'DATE': date_str, 
+                        'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'),
+                        'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 
+                        'SYMBOL': symbol,
+                        'SIGNAL': 'BUY', 
+                        'ENTRY': entry, 
+                        'QUANTITY': quantity,
+                        'STOPLOSS': stop_loss, 
+                        'T1': round_to_2_decimals(entry + risk),
+                        'T2': round_to_2_decimals(entry + risk * 2), 
+                        'T3': round_to_2_decimals(entry + risk * 3),
+                        'VOLUME': int(current_candle['volume']), 
+                        'T1_HIT': False, 
+                        'T2_HIT': False, 
+                        'T3_HIT': False
                     }
-                    if date_tracker is not None: date_tracker[key] = True
+                    if date_tracker is not None: 
+                        date_tracker[key] = True
                     signals.append(signal)
                     break
             
@@ -408,41 +451,70 @@ class CandleBreakoutStrategy:
                 stop_loss = high_915
                 risk = round_to_2_decimals(stop_loss - entry)
                 if risk > 0:
-                    quantity = int(self.risk_amount / risk)
+                    quantity = max(1, int(self.risk_amount / risk))
                     signal = {
-                        'DATE': date_str, 'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'),
-                        'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 'SYMBOL': symbol,
-                        'SIGNAL': 'SELL', 'ENTRY': entry, 'QUANTITY': quantity,
-                        'STOPLOSS': stop_loss, 'T1': round_to_2_decimals(entry - risk),
-                        'T2': round_to_2_decimals(entry - risk * 2), 'T3': round_to_2_decimals(entry - risk * 3),
-                        'VOLUME': int(current_candle['volume']), 'T1_HIT': False, 'T2_HIT': False, 'T3_HIT': False
+                        'DATE': date_str, 
+                        'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'),
+                        'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 
+                        'SYMBOL': symbol,
+                        'SIGNAL': 'SELL', 
+                        'ENTRY': entry, 
+                        'QUANTITY': quantity,
+                        'STOPLOSS': stop_loss, 
+                        'T1': round_to_2_decimals(entry - risk),
+                        'T2': round_to_2_decimals(entry - risk * 2), 
+                        'T3': round_to_2_decimals(entry - risk * 3),
+                        'VOLUME': int(current_candle['volume']), 
+                        'T1_HIT': False, 
+                        'T2_HIT': False, 
+                        'T3_HIT': False
                     }
-                    if date_tracker is not None: date_tracker[key] = True
+                    if date_tracker is not None: 
+                        date_tracker[key] = True
                     signals.append(signal)
                     break
         return signals
 
 def fetch_data(symbol, interval, n_bars=100):
+    """Fetch historical data using Yahoo Finance"""
     try:
-        tv = TvDatafeed()
-        inv_map = {'5min': Interval.in_5_minute, '15min': Interval.in_15_minute, 'daily': Interval.in_daily}
-        return tv.get_hist(symbol=symbol, exchange="NSE", interval=inv_map.get(interval, Interval.in_15_minute), n_bars=n_bars)
+        # Add .NS suffix if not present for NSE stocks
+        if symbol not in ["BANKNIFTY", "NIFTY"] and not symbol.endswith('.NS'):
+            symbol = f"{symbol}.NS"
+        
+        # Map interval to Yahoo Finance interval
+        interval_map = {
+            '5min': '5m',
+            '15min': '15m',
+            'daily': '1d'
+        }
+        
+        yf_interval = interval_map.get(interval, '15m')
+        
+        # Fetch data
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(period='5d', interval=yf_interval)
+        
+        if df.empty:
+            return None
+            
+        return df
+        
     except Exception as e:
         return None
 
 def check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amount, mode, existing_signals, **strategy_params):
     all_new_signals = []
-    if strategy_name == "Candle Breakout Strategy":
-        strategy = CandleBreakoutStrategy(timeframe, risk_amount, mode)
-    else:
-        strategy = CandleBreakoutStrategy(timeframe, risk_amount, mode)
+    strategy = CandleBreakoutStrategy(timeframe, risk_amount, mode)
     
     for symbol in selected_symbols:
         data = fetch_data(symbol, timeframe)
-        if data is not None:
+        if data is not None and not data.empty:
             signals = strategy.analyze(data, symbol, st.session_state.signal_count_per_stock)
             if signals: 
                 all_new_signals.extend(signals)
+        time.sleep(0.5)  # Small delay between requests
+    
     return all_new_signals
 
 def run_bot_cycle(selected_symbols, timeframe, strategy, risk_amount, selected_mode, strategy_params, refresh_interval, progress_bar, status_text):
@@ -459,7 +531,12 @@ def run_bot_cycle(selected_symbols, timeframe, strategy, risk_amount, selected_m
 def display_signals_table(signals, title="Signals"):
     if signals:
         df = pd.DataFrame(signals)
-        st.dataframe(df.style.map(lambda x: 'background-color: #00ff00; color: black' if x == 'BUY' else ('background-color: #ff0000; color: white' if x == 'SELL' else ''), subset=['SIGNAL']), use_container_width=True)
+        styled_df = df.style.map(
+            lambda x: 'background-color: #00ff00; color: black' if x == 'BUY' 
+            else ('background-color: #ff0000; color: white' if x == 'SELL' else ''), 
+            subset=['SIGNAL']
+        )
+        st.dataframe(styled_df, use_container_width=True)
 
 def main():
     st.title("📈 Algorithmic Trading System")
@@ -484,36 +561,30 @@ def main():
             help="Choose Gainers for positive change % or Losers for negative change %"
         )
         
-        # Update session state based on selection
+        # Filter inputs
         if market_type == "🏆 Gainers":
             st.session_state.market_type = "Gainers"
-            # Filter inputs for Gainers (positive values)
             col1, col2 = st.columns(2)
             with col1:
-                min_change = st.number_input("Min Change %", 0.0, 100.0, 2.0, 0.5, key="gainers_min")
-                max_change = st.number_input("Max Change %", 0.0, 100.0, 5.0, 0.5, key="gainers_max")
+                min_change = st.number_input("Min Change %", 0.0, 20.0, 1.0, 0.5, key="gainers_min")
+                max_change = st.number_input("Max Change %", 0.0, 20.0, 5.0, 0.5, key="gainers_max")
         else:
             st.session_state.market_type = "Losers"
-            # Filter inputs for Losers (negative values)
             col1, col2 = st.columns(2)
             with col1:
-                min_change = st.number_input("Min Change %", -100.0, 0.0, -5.0, 0.5, key="losers_min")
-                max_change = st.number_input("Max Change %", -100.0, 0.0, -2.0, 0.5, key="losers_max")
+                min_change = st.number_input("Min Change %", -20.0, 0.0, -5.0, 0.5, key="losers_min")
+                max_change = st.number_input("Max Change %", -20.0, 0.0, -1.0, 0.5, key="losers_max")
         
         with col2:
-            min_ltp = st.number_input("Min LTP (₹)", 0, 10000, 500, 100)
-            max_ltp = st.number_input("Max LTP (₹)", 0, 50000, 3000, 100)
+            min_ltp = st.number_input("Min LTP (₹)", 0, 10000, 100, 100)
+            max_ltp = st.number_input("Max LTP (₹)", 0, 50000, 5000, 100)
         
         if st.button("🚀 GET NIFTY 200 DATA", type="primary", use_container_width=True):
-            with st.spinner(f"Fetching {st.session_state.market_type} from NSE..."):
+            with st.spinner(f"Fetching {st.session_state.market_type} data from Yahoo Finance..."):
                 nifty_df = fetch_nifty200_stocks()
+                
                 if not nifty_df.empty:
-                    # Debug info
-                    st.write(f"Total stocks fetched: {len(nifty_df)}")
-                    st.write(f"Market Type: {st.session_state.market_type}")
-                    st.write(f"Change range: {min_change} to {max_change}")
-                    
-                    # Apply filters based on Gainers or Losers
+                    # Apply filters
                     if st.session_state.market_type == "Gainers":
                         filtered = nifty_df[
                             (nifty_df['Change %'] >= min_change) & 
@@ -523,7 +594,6 @@ def main():
                         ]
                         filtered = filtered.sort_values('Change %', ascending=False)
                     else:  # Losers
-                        # For losers, we want stocks with negative change %
                         filtered = nifty_df[
                             (nifty_df['Change %'] <= min_change) & 
                             (nifty_df['Change %'] >= max_change) & 
@@ -532,10 +602,13 @@ def main():
                         ]
                         filtered = filtered.sort_values('Change %', ascending=True)
                     
-                    st.session_state.filtered_stocks = filtered['Symbol'].tolist()
-                    st.session_state.filtered_df = filtered
-                    st.success(f"✅ Found {len(st.session_state.filtered_stocks)} {st.session_state.market_type}!")
-                    st.rerun()
+                    if not filtered.empty:
+                        st.session_state.filtered_stocks = filtered['Symbol'].tolist()
+                        st.session_state.filtered_df = filtered
+                        st.success(f"✅ Found {len(st.session_state.filtered_stocks)} {st.session_state.market_type}!")
+                        st.rerun()
+                    else:
+                        st.warning(f"No stocks found matching criteria. Try adjusting filters.")
                 else:
                     st.error("Failed to fetch data. Please try again.")
         
@@ -593,7 +666,7 @@ def main():
         display_df['Change %'] = display_df['Change %'].apply(lambda x: f"{x:+.2f}%")
         display_df['Volume'] = display_df['Volume'].apply(lambda x: f"{int(x):,}")
         
-        st.dataframe(display_df, use_container_width=True, height=300)
+        st.dataframe(display_df, use_container_width=True, height=400)
         st.markdown("---")
     
     # Bot Status and Signals
@@ -644,10 +717,10 @@ def main():
             **Step 1:** Select **Gainers** 🏆 or **Losers** 📉 in sidebar
             
             **Step 2:** Set filter criteria:
-            - For Gainers: Positive change % (e.g., 2% to 5%)
-            - For Losers: Negative change % (e.g., -5% to -2%)
+            - For Gainers: Positive change % (e.g., 1% to 5%)
+            - For Losers: Negative change % (e.g., -5% to -1%)
             
-            **Step 3:** Set LTP range (₹500 to ₹3000)
+            **Step 3:** Set LTP range (₹100 to ₹5000)
             
             **Step 4:** Click **GET NIFTY 200 DATA** to fetch filtered stocks
             
@@ -658,6 +731,8 @@ def main():
             **Strategy:** Candle Breakout - First candle of the day sets reference, any breakout generates signal
             
             **Note:** Make sure you have set TELEGRAM_TOKEN and TELEGRAM_CHAT_ID in Streamlit secrets for alerts
+            
+            **Data Source:** Yahoo Finance (more reliable than NSE direct API)
             """)
 
 if __name__ == "__main__":
