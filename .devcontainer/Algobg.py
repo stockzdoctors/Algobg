@@ -108,7 +108,7 @@ if 'filtered_df' not in st.session_state:
 if 'use_filtered' not in st.session_state:
     st.session_state.use_filtered = False
 
-# Stock symbols - Updated with 200+ stocks
+# Stock symbols - Updated with 200+ stocks (ONLY CHANGE)
 SYMBOLS = [
     "GROWW", "HDFCBANK", "ICICIBANK", "VEDL", "BSE", "TCS", "INFY", "LT", 
     "HINDALCO", "MCX", "ETERNAL", "RELIANCE", "SBIN", "ADANIPOWER", "BHARTIARTL", 
