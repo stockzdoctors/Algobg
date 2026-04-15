@@ -619,4 +619,4 @@ def main():
             """)
 
 if __name__ == "__main__":
-    main() Failed to fetch data
+    main()
