@@ -122,7 +122,7 @@ No trading recommendations provided.
 Always consult registered experts.
 ━━━━━━━━━━━━━━━━━━"""
 
-# --- NSE NIFTY 200 FETCH FUNCTION ---
+# --- NSE NIFTY 200 FETCH FUNCTION (FIXED) ---
 @st.cache_data(ttl=300)
 def fetch_nifty200_stocks():
     """Fetch NIFTY 200 stocks from NSE India"""
@@ -137,17 +137,22 @@ def fetch_nifty200_stocks():
             'X-Requested-With': 'XMLHttpRequest'
         }
         
+        # Create a session to handle cookies
         session = requests.Session()
         session.headers.update(headers)
-        session.get("https://www.nseindia.com", timeout=10)
-        time.sleep(1)
         
+        # First, visit the main page to get cookies (CRITICAL FIX)
+        main_response = session.get("https://www.nseindia.com", timeout=10)
+        time.sleep(2)  # Increased delay to ensure cookies are properly set
+        
+        # Now fetch the NIFTY 200 data
         response = session.get(nse_url, timeout=15)
         
         if response.status_code == 200:
             data = response.json()
             stocks_data = []
             
+            # Parse the data
             for item in data.get('data', []):
                 try:
                     ltp = float(item.get('lastPrice', 0))
@@ -162,10 +167,22 @@ def fetch_nifty200_stocks():
                 except (ValueError, TypeError, KeyError):
                     continue
             
-            return pd.DataFrame(stocks_data)
+            if stocks_data:
+                return pd.DataFrame(stocks_data)
+            else:
+                st.warning("No valid stock data found in response")
+                return pd.DataFrame()
         
+        else:
+            st.error(f"API returned status code: {response.status_code}")
+            return pd.DataFrame()
+        
+    except requests.exceptions.Timeout:
+        st.error("Timeout while fetching NSE data. Please try again.")
         return pd.DataFrame()
-        
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network error: {str(e)}")
+        return pd.DataFrame()
     except Exception as e:
         st.error(f"Error fetching NSE data: {str(e)}")
         return pd.DataFrame()
