@@ -1,0 +1,8 @@
+streamlit
+pandas
+numpy
+plotly
+tvDatafeed @ git+https://github.com/rongardF/tvDatafeed.git
+python-telegram-bot
+requests
+nest-asyncio
