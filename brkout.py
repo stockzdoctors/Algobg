@@ -13,7 +13,6 @@ from telegram import Bot
 from telegram.error import TelegramError
 import threading
 import requests
-import json
 warnings.filterwarnings('ignore')
 
 # --- REMOVE ALL STREAMLIT & GITHUB BRANDING ---
@@ -53,7 +52,6 @@ st.markdown("""
         }
     </style>
     """, unsafe_allow_html=True)
-
 # Apply nest_asyncio to allow multiple asyncio runs
 nest_asyncio.apply()
 
@@ -109,24 +107,10 @@ if 'filtered_df' not in st.session_state:
     st.session_state.filtered_df = pd.DataFrame()
 if 'use_filtered' not in st.session_state:
     st.session_state.use_filtered = False
-if 'market_type' not in st.session_state:
-    st.session_state.market_type = "Gainers"
 
-# Stock symbols (using TV Datafeed compatible symbols)
+# Stock symbols
 SYMBOLS = ["BANKNIFTY", "NIFTY", "UPL", "INFY", "ULTRACEMCO", "RELIANCE", 
            "ASIANPAINT", "ABB", "ACC", "LT", "HDFCBANK"]
-
-# Pre-defined list of NIFTY 200 stocks (top 50 for performance)
-NIFTY_200_STOCKS = [
-    "RELIANCE", "TCS", "HDFCBANK", "INFY", "HINDUNILVR", "ICICIBANK",
-    "ITC", "SBIN", "BHARTIARTL", "KOTAKBANK", "BAJFINANCE", "WIPRO",
-    "AXISBANK", "LT", "SUNPHARMA", "TITAN", "MARUTI", "ULTRACEMCO",
-    "HCLTECH", "ASIANPAINT", "NESTLEIND", "TECHM", "JSWSTEEL", "POWERGRID",
-    "NTPC", "M&M", "BAJAJFINSV", "TATAMOTORS", "TATASTEEL", "HDFC",
-    "INDUSINDBK", "ONGC", "BRITANNIA", "GRASIM", "DIVISLAB", "DRREDDY",
-    "HDFCLIFE", "SBILIFE", "CIPLA", "UPL", "ADANIPORTS", "SHREECEM",
-    "EICHERMOT", "BPCL", "COALINDIA", "HEROMOTOCO", "BAJAJ-AUTO", "TATACONSUM"
-]
 
 # Simple disclaimer for Telegram
 DISCLAIMER = """
@@ -138,107 +122,56 @@ No trading recommendations provided.
 Always consult registered experts.
 ━━━━━━━━━━━━━━━━━━"""
 
-# --- FETCH STOCK DATA USING MULTIPLE SOURCES ---
-
-def fetch_stock_price_alpha_vantage(symbol):
-    """Fetch stock data using Alpha Vantage (requires API key)"""
-    try:
-        # Note: You'll need to add ALPHA_VANTAGE_API_KEY to your secrets
-        api_key = st.secrets.get("ALPHA_VANTAGE_API_KEY", "")
-        if not api_key:
-            return None
-            
-        url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}.BSE&apikey={api_key}"
-        response = requests.get(url, timeout=10)
-        data = response.json()
-        
-        if 'Global Quote' in data and data['Global Quote']:
-            quote = data['Global Quote']
-            return {
-                'Symbol': symbol,
-                'LTP': float(quote.get('05. price', 0)),
-                'Change %': float(quote.get('10. change percent', '0%').replace('%', '')),
-                'Volume': int(quote.get('06. volume', 0))
-            }
-    except:
-        pass
-    return None
-
-def fetch_stock_price_dummy(symbol):
-    """Generate realistic dummy data for demonstration"""
-    # This is for demonstration purposes only
-    # In production, you should use real data sources
-    
-    # Get base price (realistic ranges for different stocks)
-    base_prices = {
-        "RELIANCE": 2500, "TCS": 3500, "HDFCBANK": 1600, "INFY": 1500,
-        "HINDUNILVR": 2500, "ICICIBANK": 1000, "ITC": 450, "SBIN": 600,
-        "BHARTIARTL": 1000, "KOTAKBANK": 1800, "BAJFINANCE": 7000, "WIPRO": 500,
-        "AXISBANK": 1000, "LT": 3000, "SUNPHARMA": 1200, "TITAN": 3000,
-        "MARUTI": 10000, "ULTRACEMCO": 8000, "HCLTECH": 1200, "ASIANPAINT": 3000,
-        "NESTLEIND": 20000, "TECHM": 1200, "JSWSTEEL": 700, "POWERGRID": 200,
-        "NTPC": 300, "M&M": 1500, "BAJAJFINSV": 1500, "TATAMOTORS": 600,
-        "TATASTEEL": 120, "HDFC": 2800, "INDUSINDBK": 1200, "ONGC": 150,
-        "BRITANNIA": 4500, "GRASIM": 1800, "DIVISLAB": 3500, "DRREDDY": 4500,
-        "HDFCLIFE": 600, "SBILIFE": 1200, "CIPLA": 1000, "UPL": 700,
-        "ADANIPORTS": 800, "SHREECEM": 25000, "EICHERMOT": 3500, "BPCL": 350,
-        "COALINDIA": 250, "HEROMOTOCO": 2800, "BAJAJ-AUTO": 4000, "TATACONSUM": 800
-    }
-    
-    base_price = base_prices.get(symbol, 1000)
-    
-    # Add random movement (-3% to +3%)
-    change_percent = np.random.uniform(-3, 3)
-    ltp = base_price * (1 + change_percent / 100)
-    
-    # Generate random volume
-    volume = np.random.randint(100000, 10000000)
-    
-    return {
-        'Symbol': symbol,
-        'LTP': round(ltp, 2),
-        'Change %': round(change_percent, 2),
-        'Volume': volume
-    }
-
+# --- NSE NIFTY 200 FETCH FUNCTION ---
 @st.cache_data(ttl=300)
 def fetch_nifty200_stocks():
-    """Fetch NIFTY 200 stocks data using multiple sources"""
-    
-    # Try Alpha Vantage first if API key is available
-    api_key = st.secrets.get("ALPHA_VANTAGE_API_KEY", "")
-    
-    stocks_data = []
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    for idx, symbol in enumerate(NIFTY_200_STOCKS):
-        status_text.text(f"Fetching data for {symbol}... ({idx+1}/{len(NIFTY_200_STOCKS)})")
-        progress_bar.progress((idx + 1) / len(NIFTY_200_STOCKS))
+    """Fetch NIFTY 200 stocks from NSE India"""
+    try:
+        nse_url = "https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20200"
         
-        stock_data = None
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': 'https://www.nseindia.com/',
+            'X-Requested-With': 'XMLHttpRequest'
+        }
         
-        # Try Alpha Vantage if API key exists
-        if api_key:
-            stock_data = fetch_stock_price_alpha_vantage(symbol)
+        session = requests.Session()
+        session.headers.update(headers)
+        session.get("https://www.nseindia.com", timeout=10)
+        time.sleep(1)
         
-        # If Alpha Vantage fails or no API key, use dummy data
-        if stock_data is None:
-            stock_data = fetch_stock_price_dummy(symbol)
+        response = session.get(nse_url, timeout=15)
         
-        if stock_data:
-            stocks_data.append(stock_data)
+        if response.status_code == 200:
+            data = response.json()
+            stocks_data = []
+            
+            for item in data.get('data', []):
+                try:
+                    ltp = float(item.get('lastPrice', 0))
+                    change_percent = float(item.get('pChange', 0))
+                    
+                    stocks_data.append({
+                        'Symbol': item.get('symbol', ''),
+                        'LTP': ltp,
+                        'Change %': change_percent,
+                        'Volume': item.get('totalTradedVolume', 0)
+                    })
+                except (ValueError, TypeError, KeyError):
+                    continue
+            
+            return pd.DataFrame(stocks_data)
         
-        time.sleep(0.1)  # Small delay
-    
-    progress_bar.empty()
-    status_text.empty()
-    
-    df = pd.DataFrame(stocks_data)
-    return df
+        return pd.DataFrame()
+        
+    except Exception as e:
+        st.error(f"Error fetching NSE data: {str(e)}")
+        return pd.DataFrame()
 
 def send_telegram_message_sync(message):
-    """Send Telegram message using simple HTTP Request"""
+    """Send Telegram message using simple HTTP Request (More stable for Cloud)"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {
@@ -246,7 +179,7 @@ def send_telegram_message_sync(message):
             "text": message,
             "parse_mode": "Markdown"
         }
-        response = requests.post(url, data=payload, timeout=10)
+        response = requests.post(url, data=payload)
         if response.status_code == 200:
             return True
         else:
@@ -370,7 +303,7 @@ def round_to_2_decimals(value):
     return round(float(value), 2)
 
 class CandleBreakoutStrategy:
-    """Strategy: First candle reference, any future candle breakout, one signal per day"""
+    """Strategy: 9:15 reference, any future candle breakout, one signal per day"""
     
     def __init__(self, timeframe='15min', risk_amount=10000, mode="Live Trading"):
         self.timeframe = timeframe
@@ -392,8 +325,9 @@ class CandleBreakoutStrategy:
         if len(today_df) < 1:
             return None
 
-        # Find the VERY FIRST candle of today
+        # --- PERSISTENT LOGIC: Find the VERY FIRST candle of today ---
         reference_candle = today_df.iloc[0]
+        reference_idx = 0
         
         high_915 = round_to_2_decimals(reference_candle['high'])
         low_915 = round_to_2_decimals(reference_candle['low'])
@@ -404,11 +338,12 @@ class CandleBreakoutStrategy:
             if date_tracker.get(key, False):
                 return None
         
-        # Check every candle from the 2nd candle onwards
+        # Check every candle from the 2nd candle onwards to find a breakout
         for i in range(1, len(today_df)):
             current_candle = today_df.iloc[i]
             current_high = round_to_2_decimals(current_candle['high'])
             current_low = round_to_2_decimals(current_candle['low'])
+            current_close = round_to_2_decimals(current_candle['close'])
             
             # BUY Condition
             if current_high > high_915:
@@ -416,26 +351,16 @@ class CandleBreakoutStrategy:
                 stop_loss = low_915
                 risk = round_to_2_decimals(entry - stop_loss)
                 if risk > 0:
-                    quantity = max(1, int(self.risk_amount / risk))
+                    quantity = int(self.risk_amount / risk)
                     signal = {
-                        'DATE': date_str, 
-                        'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'),
-                        'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 
-                        'SYMBOL': symbol,
-                        'SIGNAL': 'BUY', 
-                        'ENTRY': entry, 
-                        'QUANTITY': quantity,
-                        'STOPLOSS': stop_loss, 
-                        'T1': round_to_2_decimals(entry + risk),
-                        'T2': round_to_2_decimals(entry + risk * 2), 
-                        'T3': round_to_2_decimals(entry + risk * 3),
-                        'VOLUME': int(current_candle['volume']), 
-                        'T1_HIT': False, 
-                        'T2_HIT': False, 
-                        'T3_HIT': False
+                        'DATE': date_str, 'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'),
+                        'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 'SYMBOL': symbol,
+                        'SIGNAL': 'BUY', 'ENTRY': entry, 'QUANTITY': quantity,
+                        'STOPLOSS': stop_loss, 'T1': round_to_2_decimals(entry + risk),
+                        'T2': round_to_2_decimals(entry + risk * 2), 'T3': round_to_2_decimals(entry + risk * 3),
+                        'VOLUME': int(current_candle['volume']), 'T1_HIT': False, 'T2_HIT': False, 'T3_HIT': False
                     }
-                    if date_tracker is not None: 
-                        date_tracker[key] = True
+                    if date_tracker is not None: date_tracker[key] = True
                     signals.append(signal)
                     break
             
@@ -445,68 +370,57 @@ class CandleBreakoutStrategy:
                 stop_loss = high_915
                 risk = round_to_2_decimals(stop_loss - entry)
                 if risk > 0:
-                    quantity = max(1, int(self.risk_amount / risk))
+                    quantity = int(self.risk_amount / risk)
                     signal = {
-                        'DATE': date_str, 
-                        'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'),
-                        'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 
-                        'SYMBOL': symbol,
-                        'SIGNAL': 'SELL', 
-                        'ENTRY': entry, 
-                        'QUANTITY': quantity,
-                        'STOPLOSS': stop_loss, 
-                        'T1': round_to_2_decimals(entry - risk),
-                        'T2': round_to_2_decimals(entry - risk * 2), 
-                        'T3': round_to_2_decimals(entry - risk * 3),
-                        'VOLUME': int(current_candle['volume']), 
-                        'T1_HIT': False, 
-                        'T2_HIT': False, 
-                        'T3_HIT': False
+                        'DATE': date_str, 'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'),
+                        'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 'SYMBOL': symbol,
+                        'SIGNAL': 'SELL', 'ENTRY': entry, 'QUANTITY': quantity,
+                        'STOPLOSS': stop_loss, 'T1': round_to_2_decimals(entry - risk),
+                        'T2': round_to_2_decimals(entry - risk * 2), 'T3': round_to_2_decimals(entry - risk * 3),
+                        'VOLUME': int(current_candle['volume']), 'T1_HIT': False, 'T2_HIT': False, 'T3_HIT': False
                     }
-                    if date_tracker is not None: 
-                        date_tracker[key] = True
+                    if date_tracker is not None: date_tracker[key] = True
                     signals.append(signal)
                     break
         return signals
 
+class MovingAverageCrossStrategy:
+    def __init__(self, timeframe='15min', fast_ma=9, slow_ma=21, risk_amount=10000, mode="Live Trading"):
+        self.timeframe, self.fast_ma, self.slow_ma, self.risk_amount, self.mode = timeframe, fast_ma, slow_ma, risk_amount, mode
+    def analyze(self, df, symbol, date_tracker=None):
+        return None
+
+class RSIBreakoutStrategy:
+    def __init__(self, timeframe='15min', rsi_period=14, risk_amount=10000, mode="Live Trading"):
+        self.timeframe, self.rsi_period, self.risk_amount, self.mode = timeframe, rsi_period, risk_amount, mode
+    def analyze(self, df, symbol, date_tracker=None):
+        return None
+
 def fetch_data(symbol, interval, n_bars=100):
-    """Fetch historical data using TV Datafeed"""
     try:
         tv = TvDatafeed()
-        inv_map = {
-            '5min': Interval.in_5_minute, 
-            '15min': Interval.in_15_minute, 
-            'daily': Interval.in_daily
-        }
-        return tv.get_hist(
-            symbol=symbol, 
-            exchange="NSE", 
-            interval=inv_map.get(interval, Interval.in_15_minute), 
-            n_bars=n_bars
-        )
-    except Exception as e:
-        return None
+        inv_map = {'5min': Interval.in_5_minute, '15min': Interval.in_15_minute, 'daily': Interval.in_daily}
+        return tv.get_hist(symbol=symbol, exchange="NSE", interval=inv_map.get(interval, Interval.in_15_minute), n_bars=n_bars)
+    except: return None
 
 def check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amount, mode, existing_signals, **strategy_params):
     all_new_signals = []
-    strategy = CandleBreakoutStrategy(timeframe, risk_amount, mode)
+    if strategy_name == "Candle Breakout Strategy":
+        strategy = CandleBreakoutStrategy(timeframe, risk_amount, mode)
+    else:
+        strategy = CandleBreakoutStrategy(timeframe, risk_amount, mode)
     
     for symbol in selected_symbols:
         data = fetch_data(symbol, timeframe)
-        if data is not None and not data.empty:
+        if data is not None:
             signals = strategy.analyze(data, symbol, st.session_state.signal_count_per_stock)
-            if signals: 
-                all_new_signals.extend(signals)
-        time.sleep(0.5)  # Small delay between requests
-    
+            if signals: all_new_signals.extend(signals)
     return all_new_signals
 
 def run_bot_cycle(selected_symbols, timeframe, strategy, risk_amount, selected_mode, strategy_params, refresh_interval, progress_bar, status_text):
     st.session_state.refresh_counter += 1
     st.session_state.last_check_time = datetime.now()
     for i in range(refresh_interval, 0, -1):
-        if not st.session_state.auto_refresh:
-            break
         progress_bar.progress((refresh_interval - i) / refresh_interval)
         status_text.text(f"🔄 Next check in {i} seconds... (Cycle: {st.session_state.refresh_counter})")
         time.sleep(1)
@@ -515,12 +429,7 @@ def run_bot_cycle(selected_symbols, timeframe, strategy, risk_amount, selected_m
 def display_signals_table(signals, title="Signals"):
     if signals:
         df = pd.DataFrame(signals)
-        styled_df = df.style.map(
-            lambda x: 'background-color: #00ff00; color: black' if x == 'BUY' 
-            else ('background-color: #ff0000; color: white' if x == 'SELL' else ''), 
-            subset=['SIGNAL']
-        )
-        st.dataframe(styled_df, use_container_width=True)
+        st.dataframe(df.style.map(lambda x: 'background-color: #00ff00; color: black' if x == 'BUY' else ('background-color: #ff0000; color: white' if x == 'SELL' else ''), subset=['SIGNAL']), use_container_width=True)
 
 def main():
     st.title("📈 Algorithmic Trading System")
@@ -529,84 +438,44 @@ def main():
     # Sidebar
     with st.sidebar:
         selected_mode = st.radio("Select Mode", ["Live Trading", "Backtest (Last 2 Days)"])
-        risk_amount = st.number_input("Risk per Trade (₹)", 1000, 1000000, 10000, step=1000)
+        risk_amount = st.number_input("Risk per Trade", 1000, 1000000, 10000)
         timeframe = st.selectbox("Timeframe", ['15min', '5min'])
         strategy = st.selectbox("Strategy", ["Candle Breakout Strategy"])
-        update_interval = st.slider("Update Interval (seconds)", 5, 60, 10)
+        update_interval = st.slider("Update Interval", 5, 60, 10)
         
         st.markdown("---")
-        st.subheader("📊 NIFTY 200 Screener")
+        st.subheader("📊 NIFTY 200 Filter")
         
-        # Information about data source
-        st.info("ℹ️ Using TV Datafeed for real-time data")
-        
-        # Gainers/Losers Selection
-        market_type = st.radio(
-            "Select Market Type",
-            ["🏆 Gainers", "📉 Losers"],
-            horizontal=True,
-            help="Choose Gainers for positive change % or Losers for negative change %"
-        )
-        
-        # Filter inputs
-        if market_type == "🏆 Gainers":
-            st.session_state.market_type = "Gainers"
-            col1, col2 = st.columns(2)
-            with col1:
-                min_change = st.number_input("Min Change %", 0.0, 20.0, 1.0, 0.5, key="gainers_min")
-                max_change = st.number_input("Max Change %", 0.0, 20.0, 5.0, 0.5, key="gainers_max")
-        else:
-            st.session_state.market_type = "Losers"
-            col1, col2 = st.columns(2)
-            with col1:
-                min_change = st.number_input("Min Change %", -20.0, 0.0, -5.0, 0.5, key="losers_min")
-                max_change = st.number_input("Max Change %", -20.0, 0.0, -1.0, 0.5, key="losers_max")
-        
-        with col2:
-            min_ltp = st.number_input("Min LTP (₹)", 0, 10000, 100, 100)
-            max_ltp = st.number_input("Max LTP (₹)", 0, 50000, 5000, 100)
+        min_change = st.number_input("Min Change %", 0.0, 100.0, 2.0, 0.5)
+        max_change = st.number_input("Max Change %", 0.0, 100.0, 5.0, 0.5)
+        min_ltp = st.number_input("Min LTP (₹)", 0, 10000, 500, 100)
+        max_ltp = st.number_input("Max LTP (₹)", 0, 50000, 3000, 100)
         
         if st.button("🚀 GET NIFTY 200 DATA", type="primary", use_container_width=True):
-            with st.spinner(f"Fetching {st.session_state.market_type} data..."):
+            with st.spinner("Fetching NIFTY 200 stocks from NSE..."):
                 nifty_df = fetch_nifty200_stocks()
-                
                 if not nifty_df.empty:
-                    # Apply filters
-                    if st.session_state.market_type == "Gainers":
-                        filtered = nifty_df[
-                            (nifty_df['Change %'] >= min_change) & 
-                            (nifty_df['Change %'] <= max_change) & 
-                            (nifty_df['LTP'] > min_ltp) & 
-                            (nifty_df['LTP'] < max_ltp)
-                        ]
-                        filtered = filtered.sort_values('Change %', ascending=False)
-                    else:  # Losers
-                        filtered = nifty_df[
-                            (nifty_df['Change %'] <= min_change) & 
-                            (nifty_df['Change %'] >= max_change) & 
-                            (nifty_df['LTP'] > min_ltp) & 
-                            (nifty_df['LTP'] < max_ltp)
-                        ]
-                        filtered = filtered.sort_values('Change %', ascending=True)
-                    
-                    if not filtered.empty:
-                        st.session_state.filtered_stocks = filtered['Symbol'].tolist()
-                        st.session_state.filtered_df = filtered
-                        st.success(f"✅ Found {len(st.session_state.filtered_stocks)} {st.session_state.market_type}!")
-                        st.rerun()
-                    else:
-                        st.warning(f"No stocks found matching criteria. Try adjusting filters.")
+                    filtered = nifty_df[
+                        (nifty_df['Change %'] >= min_change) & 
+                        (nifty_df['Change %'] <= max_change) & 
+                        (nifty_df['LTP'] > min_ltp) & 
+                        (nifty_df['LTP'] < max_ltp)
+                    ]
+                    st.session_state.filtered_stocks = filtered['Symbol'].tolist()
+                    st.session_state.filtered_df = filtered
+                    st.success(f"✅ Found {len(st.session_state.filtered_stocks)} stocks!")
+                    st.rerun()
                 else:
-                    st.error("Failed to fetch data. Please try again.")
+                    st.error("Failed to fetch data")
         
         st.markdown("---")
         
-        # Option to use filtered stocks
+        # Option to use filtered stocks (checkbox in sidebar)
         if st.session_state.filtered_stocks:
             st.session_state.use_filtered = st.checkbox("📌 Use Filtered Stocks for Trading", value=st.session_state.use_filtered)
             
             if st.session_state.use_filtered:
-                st.info(f"✅ Trading with {len(st.session_state.filtered_stocks)} {st.session_state.market_type}")
+                st.info(f"✅ Trading with {len(st.session_state.filtered_stocks)} filtered stocks")
             else:
                 st.info(f"📊 Trading with {len(SYMBOLS)} default stocks")
         
@@ -625,25 +494,17 @@ def main():
     
     # Display Filtered Stocks on Main Page
     if st.session_state.filtered_df is not None and not st.session_state.filtered_df.empty:
-        # Set title based on Gainers/Losers
-        if st.session_state.market_type == "Gainers":
-            st.subheader(f"🏆 NIFTY 200 {st.session_state.market_type}")
-        else:
-            st.subheader(f"📉 NIFTY 200 {st.session_state.market_type}")
+        st.subheader("📊 NIFTY 200 Filtered Stocks")
+        st.markdown(f"**Criteria:** Change % {min_change}% to {max_change}% | LTP ₹{min_ltp} to ₹{max_ltp}")
         
         # Create metrics row
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric(f"Total {st.session_state.market_type}", len(st.session_state.filtered_df))
+            st.metric("Total Stocks Found", len(st.session_state.filtered_df))
         with col2:
-            avg_change = st.session_state.filtered_df['Change %'].mean()
-            st.metric("Avg Change %", f"{avg_change:+.2f}%")
+            st.metric("Avg Change %", f"{st.session_state.filtered_df['Change %'].mean():.2f}%")
         with col3:
-            if st.session_state.market_type == "Gainers":
-                max_change_val = st.session_state.filtered_df['Change %'].max()
-            else:
-                max_change_val = st.session_state.filtered_df['Change %'].min()
-            st.metric(f"Top {st.session_state.market_type}", f"{max_change_val:+.2f}%")
+            st.metric("Max Change %", f"{st.session_state.filtered_df['Change %'].max():.2f}%")
         with col4:
             st.metric("Avg LTP", f"₹{st.session_state.filtered_df['LTP'].mean():,.2f}")
         
@@ -653,7 +514,7 @@ def main():
         display_df['Change %'] = display_df['Change %'].apply(lambda x: f"{x:+.2f}%")
         display_df['Volume'] = display_df['Volume'].apply(lambda x: f"{int(x):,}")
         
-        st.dataframe(display_df, use_container_width=True, height=400)
+        st.dataframe(display_df, use_container_width=True, height=300)
         st.markdown("---")
     
     # Bot Status and Signals
@@ -665,8 +526,7 @@ def main():
         
         # Show active trading symbols
         trading_symbols = st.session_state.filtered_stocks if (st.session_state.use_filtered and st.session_state.filtered_stocks) else SYMBOLS
-        market_emoji = "🏆" if st.session_state.market_type == "Gainers" else "📉"
-        st.info(f"{market_emoji} Monitoring {len(trading_symbols)} {st.session_state.market_type} stocks for signals")
+        st.info(f"🎯 Monitoring {len(trading_symbols)} stocks for signals")
         
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -680,7 +540,6 @@ def main():
         
         st.subheader(f"📋 Trading Signals ({len(st.session_state.signals)})")
         display_signals_table(st.session_state.signals)
-        time.sleep(1)
         st.rerun()
     
     elif st.session_state.auto_refresh and selected_mode != "Live Trading":
@@ -689,9 +548,9 @@ def main():
     else:
         # Display when bot is not running
         if st.session_state.filtered_stocks:
-            st.info(f"✅ Click **Start Bot** to begin monitoring these {st.session_state.market_type} stocks for trading signals")
+            st.info("✅ Click **Start Bot** to begin monitoring these stocks for trading signals")
         else:
-            st.info("👈 **Get Started:** Select Gainers/Losers, set filters, click 'GET NIFTY 200 DATA', then click 'Start Bot'")
+            st.info("👈 **Get Started:** Click 'GET NIFTY 200 DATA' in sidebar to fetch stocks, then click 'Start Bot'")
         
         # Show existing signals if any
         if st.session_state.signals:
@@ -701,26 +560,15 @@ def main():
         # Instructions
         with st.expander("ℹ️ How to Use", expanded=False):
             st.markdown("""
-            **Step 1:** Select **Gainers** 🏆 or **Losers** 📉 in sidebar
+            **Step 1:** Set filter criteria in sidebar (Change % and LTP)
             
-            **Step 2:** Set filter criteria:
-            - For Gainers: Positive change % (e.g., 1% to 5%)
-            - For Losers: Negative change % (e.g., -5% to -1%)
+            **Step 2:** Click **GET NIFTY 200 DATA** to fetch filtered stocks
             
-            **Step 3:** Set LTP range (₹100 to ₹5000)
+            **Step 3:** Check **Use Filtered Stocks for Trading** (optional)
             
-            **Step 4:** Click **GET NIFTY 200 DATA** to fetch filtered stocks
-            
-            **Step 5:** Check **Use Filtered Stocks for Trading** (optional)
-            
-            **Step 6:** Click **Start Bot** to begin monitoring
+            **Step 4:** Click **Start Bot** to begin monitoring
             
             **Strategy:** Candle Breakout - First candle of the day sets reference, any breakout generates signal
-            
-            **Note:** 
-            - Make sure you have set TELEGRAM_TOKEN and TELEGRAM_CHAT_ID in Streamlit secrets for alerts
-            - The app uses TV Datafeed for real-time market data
-            - For NIFTY 200 screening, it uses a pre-defined list of top stocks
             """)
 
 if __name__ == "__main__":
