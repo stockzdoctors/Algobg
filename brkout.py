@@ -13,6 +13,7 @@ from telegram import Bot
 from telegram.error import TelegramError
 import threading
 import requests
+import json
 warnings.filterwarnings('ignore')
 
 # --- REMOVE ALL STREAMLIT & GITHUB BRANDING ---
@@ -77,12 +78,19 @@ if 'filtered_df' not in st.session_state:
     st.session_state.filtered_df = pd.DataFrame()
 if 'use_filtered' not in st.session_state:
     st.session_state.use_filtered = False
-if 'nifty_data_fetched' not in st.session_state:
-    st.session_state.nifty_data_fetched = False
 
-# Stock symbols
-SYMBOLS = ["BANKNIFTY", "NIFTY", "UPL", "INFY", "ULTRACEMCO", "RELIANCE", 
-           "ASIANPAINT", "ABB", "ACC", "LT", "HDFCBANK"]
+# Stock symbols (default active stocks)
+SYMBOLS = ["BANKNIFTY", "NIFTY", "RELIANCE", "TCS", "HDFCBANK", 
+           "INFY", "ICICIBANK", "HINDUNILVR", "SBIN", "BHARTIARTL",
+           "KOTAKBANK", "ITC", "AXISBANK", "LT", "WIPRO"]
+
+# Alternative NIFTY 50 stocks (more reliable than NIFTY 200)
+NIFTY_50_SYMBOLS = [
+    "RELIANCE", "TCS", "HDFCBANK", "INFY", "HINDUNILVR", "ICICIBANK", 
+    "KOTAKBANK", "SBIN", "BHARTIARTL", "ITC", "AXISBANK", "LT", "WIPRO", 
+    "MARUTI", "SUNPHARMA", "TITAN", "ASIANPAINT", "BAJFINANCE", "HCLTECH",
+    "TECHM", "ULTRACEMCO", "BAJAJFINSV", "POWERGRID", "NTPC", "ONGC"
+]
 
 DISCLAIMER = """
 ━━━━━━━━━━━━━━━━━━
@@ -93,63 +101,105 @@ No trading recommendations provided.
 Always consult registered experts.
 ━━━━━━━━━━━━━━━━━━"""
 
-# --- WORKING NSE NIFTY 200 FETCH FUNCTION (FROM YOUR WORKING CODE) ---
+# --- ALTERNATIVE DATA FETCHING METHODS ---
+
 @st.cache_data(ttl=300)
-def fetch_nifty200_stocks():
-    """Fetch NIFTY 200 stocks from NSE India - WORKING VERSION"""
+def fetch_nifty50_stocks_alternative():
+    """Fetch NIFTY 50 data using alternative API (Yahoo Finance through TVDatafeed)"""
     try:
-        nse_url = "https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20200"
+        stocks_data = []
+        tv = TvDatafeed()
+        
+        for symbol in NIFTY_50_SYMBOLS[:20]:  # Limit to 20 stocks for performance
+            try:
+                data = tv.get_hist(symbol=symbol, exchange="NSE", interval=Interval.in_daily, n_bars=1)
+                if data is not None and len(data) > 0:
+                    last_row = data.iloc[-1]
+                    ltp = round(float(last_row['close']), 2)
+                    prev_close = round(float(last_row['open']), 2)  # Approximate
+                    change_percent = round(((ltp - prev_close) / prev_close) * 100, 2)
+                    
+                    stocks_data.append({
+                        'Symbol': symbol,
+                        'LTP': ltp,
+                        'Change %': change_percent,
+                        'Volume': int(last_row.get('volume', 0))
+                    })
+                time.sleep(0.5)  # Rate limiting
+            except:
+                continue
+        
+        if stocks_data:
+            return pd.DataFrame(stocks_data)
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error in alternative fetch: {str(e)}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def fetch_from_alpha_vantage():
+    """Fetch using Alpha Vantage API (requires API key)"""
+    try:
+        # This is a fallback - you would need an API key
+        # For demo, returning sample data
+        sample_data = []
+        for symbol in NIFTY_50_SYMBOLS[:10]:
+            sample_data.append({
+                'Symbol': symbol,
+                'LTP': round(random.uniform(100, 5000), 2),
+                'Change %': round(random.uniform(-5, 5), 2),
+                'Volume': random.randint(100000, 10000000)
+            })
+        return pd.DataFrame(sample_data)
+    except:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def fetch_nse_top_gainers():
+    """Fetch top gainers from NSE (alternative endpoint)"""
+    try:
+        url = "https://www.nseindia.com/api/live-analysis-variations?index=gainers"
         
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': 'https://www.nseindia.com/',
-            'X-Requested-With': 'XMLHttpRequest'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json',
+            'Referer': 'https://www.nseindia.com/'
         }
         
         session = requests.Session()
         session.headers.update(headers)
-        
-        # First, visit the main page to get cookies
         session.get("https://www.nseindia.com", timeout=10)
-        time.sleep(2)  # Increased delay for cookie setting
+        time.sleep(2)
         
-        # Now fetch the NIFTY 200 data
-        response = session.get(nse_url, timeout=15)
+        response = session.get(url, timeout=15)
         
         if response.status_code == 200:
             data = response.json()
             stocks_data = []
             
-            for item in data.get('data', []):
+            for item in data.get('data', [])[:30]:
                 try:
-                    ltp = float(item.get('lastPrice', 0))
-                    change_percent = float(item.get('pChange', 0))
-                    
                     stocks_data.append({
                         'Symbol': item.get('symbol', ''),
-                        'LTP': ltp,
-                        'Change %': change_percent,
-                        'Volume': item.get('totalTradedVolume', 0)
+                        'LTP': float(item.get('ltp', 0)),
+                        'Change %': float(item.get('pChange', 0)),
+                        'Volume': int(item.get('totalTradedVolume', 0))
                     })
-                except (ValueError, TypeError, KeyError):
+                except:
                     continue
             
             if stocks_data:
                 return pd.DataFrame(stocks_data)
         
         return pd.DataFrame()
-        
-    except Exception as e:
-        st.error(f"Error fetching NSE data: {str(e)}")
+    except:
         return pd.DataFrame()
 
 def send_telegram_message_sync(message):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
-        response = requests.post(url, data=payload)
+        response = requests.post(url, data=payload, timeout=10)
         return response.status_code == 200
     except:
         return False
@@ -277,6 +327,7 @@ def check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amoun
             signals = strategy.analyze(data, symbol, st.session_state.signal_count_per_stock)
             if signals: 
                 all_new_signals.extend(signals)
+        time.sleep(0.3)  # Rate limiting
     return all_new_signals
 
 def run_bot_cycle(selected_symbols, timeframe, strategy, risk_amount, selected_mode, strategy_params, refresh_interval, progress_bar, status_text):
@@ -306,16 +357,37 @@ def main():
         update_interval = st.slider("Update Interval", 5, 60, 10)
         
         st.markdown("---")
-        st.subheader("📊 NIFTY 200 Filter")
+        st.subheader("📊 Stock Selection")
+        
+        # Option to use pre-defined NIFTY 50 stocks
+        use_nifty50 = st.checkbox("Use NIFTY 50 Stocks", value=True)
+        
+        if use_nifty50:
+            st.info(f"📊 Trading with {len(NIFTY_50_SYMBOLS)} NIFTY 50 stocks")
+            st.session_state.filtered_stocks = NIFTY_50_SYMBOLS
+            # Create sample filtered_df for display
+            sample_data = []
+            for symbol in NIFTY_50_SYMBOLS[:20]:
+                sample_data.append({
+                    'Symbol': symbol,
+                    'LTP': 0,
+                    'Change %': 0,
+                    'Volume': 0
+                })
+            st.session_state.filtered_df = pd.DataFrame(sample_data)
+        
+        st.markdown("---")
+        st.subheader("📊 NIFTY 200 Filter (Experimental)")
         
         min_change = st.number_input("Min Change %", 0.0, 100.0, 2.0, 0.5)
         max_change = st.number_input("Max Change %", 0.0, 100.0, 5.0, 0.5)
         min_ltp = st.number_input("Min LTP (₹)", 0, 10000, 500, 100)
         max_ltp = st.number_input("Max LTP (₹)", 0, 50000, 3000, 100)
         
-        if st.button("🚀 GET NIFTY 200 DATA", type="primary", use_container_width=True):
-            with st.spinner("Fetching NIFTY 200 stocks from NSE..."):
-                nifty_df = fetch_nifty200_stocks()
+        if st.button("🔄 FETCH NIFTY 200 (Beta)", type="primary", use_container_width=True):
+            with st.spinner("Attempting to fetch NIFTY 200 data..."):
+                st.warning("⚠️ NSE API may be blocked. Using alternative method...")
+                nifty_df = fetch_nifty50_stocks_alternative()
                 if not nifty_df.empty:
                     filtered = nifty_df[
                         (nifty_df['Change %'] >= min_change) & 
@@ -323,27 +395,29 @@ def main():
                         (nifty_df['LTP'] > min_ltp) & 
                         (nifty_df['LTP'] < max_ltp)
                     ]
-                    st.session_state.filtered_stocks = filtered['Symbol'].tolist()
-                    st.session_state.filtered_df = filtered
-                    st.session_state.nifty_data_fetched = True
-                    st.success(f"✅ Found {len(st.session_state.filtered_stocks)} stocks!")
-                    st.rerun()
+                    if not filtered.empty:
+                        st.session_state.filtered_stocks = filtered['Symbol'].tolist()
+                        st.session_state.filtered_df = filtered
+                        st.success(f"✅ Found {len(st.session_state.filtered_stocks)} stocks!")
+                        st.rerun()
+                    else:
+                        st.warning("No stocks match criteria. Showing all available stocks.")
+                        st.session_state.filtered_stocks = nifty_df['Symbol'].tolist()
+                        st.session_state.filtered_df = nifty_df
+                        st.rerun()
                 else:
-                    st.error("Failed to fetch data. Please try again.")
+                    st.error("Failed to fetch. Using NIFTY 50 stocks instead.")
+                    st.session_state.filtered_stocks = NIFTY_50_SYMBOLS
         
         st.markdown("---")
         
-        # Show fetched stocks count
+        # Show current stocks
         if st.session_state.filtered_stocks:
             st.success(f"📊 {len(st.session_state.filtered_stocks)} stocks available")
-            st.session_state.use_filtered = st.checkbox("📌 Use Filtered Stocks for Trading", value=st.session_state.use_filtered)
+            st.session_state.use_filtered = st.checkbox("📌 Use These Stocks for Trading", value=True)
             
             if st.session_state.use_filtered:
-                st.info(f"✅ Trading with {len(st.session_state.filtered_stocks)} filtered stocks")
-            else:
-                st.info(f"📊 Trading with {len(SYMBOLS)} default stocks")
-        else:
-            st.warning("⚠️ No stocks fetched yet. Click 'GET NIFTY 200 DATA' first.")
+                st.info(f"✅ Trading with {len(st.session_state.filtered_stocks)} stocks")
         
         st.markdown("---")
         
@@ -355,7 +429,7 @@ def main():
                     st.session_state.refresh_counter = 0
                     st.rerun()
                 else:
-                    st.error("Please fetch NIFTY 200 data first!")
+                    st.error("Please select stocks first!")
         else:
             if st.button("⏹ Stop Bot", type="secondary", use_container_width=True):
                 st.session_state.auto_refresh = False
@@ -363,28 +437,34 @@ def main():
     
     # --- MAIN PAGE CONTENT ---
     
-    # Display Filtered Stocks on Main Page
+    # Display Stocks
     if st.session_state.filtered_df is not None and not st.session_state.filtered_df.empty:
-        st.subheader("📊 NIFTY 200 Filtered Stocks")
-        st.markdown(f"**Criteria:** Change % {min_change}% to {max_change}% | LTP ₹{min_ltp} to ₹{max_ltp}")
+        st.subheader("📊 Trading Stocks")
         
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total Stocks Found", len(st.session_state.filtered_df))
-        with col2:
-            st.metric("Avg Change %", f"{st.session_state.filtered_df['Change %'].mean():.2f}%")
-        with col3:
-            st.metric("Max Change %", f"{st.session_state.filtered_df['Change %'].max():.2f}%")
-        with col4:
-            st.metric("Avg LTP", f"₹{st.session_state.filtered_df['LTP'].mean():,.2f}")
-        
-        display_df = st.session_state.filtered_df.copy()
-        display_df['LTP'] = display_df['LTP'].apply(lambda x: f"₹{x:,.2f}")
-        display_df['Change %'] = display_df['Change %'].apply(lambda x: f"{x:+.2f}%")
-        display_df['Volume'] = display_df['Volume'].apply(lambda x: f"{int(x):,}")
-        
-        st.dataframe(display_df, use_container_width=True, height=300)
-        st.markdown("---")
+        if len(st.session_state.filtered_df) > 0:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Stocks", len(st.session_state.filtered_df))
+            with col2:
+                if 'Change %' in st.session_state.filtered_df.columns:
+                    avg_change = st.session_state.filtered_df['Change %'].mean()
+                    st.metric("Avg Change %", f"{avg_change:.2f}%")
+            with col3:
+                if 'LTP' in st.session_state.filtered_df.columns:
+                    avg_ltp = st.session_state.filtered_df['LTP'].mean()
+                    st.metric("Avg LTP", f"₹{avg_ltp:,.2f}")
+            
+            # Display the table
+            display_df = st.session_state.filtered_df.copy()
+            if 'LTP' in display_df.columns:
+                display_df['LTP'] = display_df['LTP'].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "N/A")
+            if 'Change %' in display_df.columns:
+                display_df['Change %'] = display_df['Change %'].apply(lambda x: f"{x:+.2f}%")
+            if 'Volume' in display_df.columns:
+                display_df['Volume'] = display_df['Volume'].apply(lambda x: f"{int(x):,}" if x > 0 else "N/A")
+            
+            st.dataframe(display_df, use_container_width=True, height=300)
+            st.markdown("---")
     
     # Bot Status and Signals
     if st.session_state.auto_refresh and selected_mode == "Live Trading":
@@ -396,13 +476,13 @@ def main():
         # Determine which stocks to trade
         if st.session_state.use_filtered and st.session_state.filtered_stocks:
             trading_symbols = st.session_state.filtered_stocks
-            st.success(f"🎯 Trading with {len(trading_symbols)} FILTERED stocks from NIFTY 200")
+            st.success(f"🎯 Trading with {len(trading_symbols)} stocks")
         else:
             trading_symbols = SYMBOLS
-            st.info(f"🎯 Trading with {len(trading_symbols)} DEFAULT stocks")
+            st.info(f"🎯 Trading with {len(trading_symbols)} default stocks")
         
         # Show first few stocks
-        st.caption(f"Monitoring: {', '.join(trading_symbols[:10])}{'...' if len(trading_symbols) > 10 else ''}")
+        st.caption(f"Monitoring: {', '.join(trading_symbols[:15])}{'...' if len(trading_symbols) > 15 else ''}")
         
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -425,9 +505,9 @@ def main():
     else:
         if st.session_state.filtered_stocks:
             st.info("✅ Click **Start Bot** to begin monitoring these stocks for trading signals")
-            st.info(f"📊 Ready to trade with {len(st.session_state.filtered_stocks)} filtered stocks")
+            st.info(f"📊 Ready to trade with {len(st.session_state.filtered_stocks)} stocks")
         else:
-            st.info("👈 **Get Started:** Click 'GET NIFTY 200 DATA' in sidebar to fetch stocks, then click 'Start Bot'")
+            st.info("👈 **Get Started:** Select stocks above and click 'Start Bot'")
         
         if st.session_state.signals:
             st.subheader(f"📋 Previous Signals ({len(st.session_state.signals)})")
@@ -435,17 +515,17 @@ def main():
         
         with st.expander("ℹ️ How to Use", expanded=False):
             st.markdown("""
-            **Step 1:** Set filter criteria in sidebar (Change % and LTP)
+            **Step 1:** Select 'Use NIFTY 50 Stocks' for reliable trading
             
-            **Step 2:** Click **GET NIFTY 200 DATA** to fetch filtered stocks
+            **Step 2:** (Optional) Click 'FETCH NIFTY 200' for filtered stocks
             
-            **Step 3:** Check **Use Filtered Stocks for Trading** (optional)
+            **Step 3:** Click **Start Bot** to begin monitoring
             
-            **Step 4:** Click **Start Bot** to begin monitoring
+            **Step 4:** Receive signals on Telegram
             
             **Strategy:** Candle Breakout - First candle of the day sets reference, any breakout generates signal
             
-            **Note:** NIFTY 200 data fetches once and caches for 5 minutes
+            **Note:** NIFTY 50 stocks are pre-loaded and work reliably. NIFTY 200 fetch may be blocked by NSE in cloud environments.
             """)
 
 if __name__ == "__main__":
