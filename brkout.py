@@ -13,8 +13,6 @@ from telegram import Bot
 from telegram.error import TelegramError
 import threading
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 warnings.filterwarnings('ignore')
 
 # --- REMOVE ALL STREAMLIT & GITHUB BRANDING ---
@@ -124,50 +122,30 @@ No trading recommendations provided.
 Always consult registered experts.
 ━━━━━━━━━━━━━━━━━━"""
 
-# --- NSE NIFTY 200 FETCH FUNCTION (FIXED FOR 403 ERROR) ---
+# --- NSE NIFTY 200 FETCH FUNCTION (WORKING VERSION FROM YOUR EXAMPLE) ---
 @st.cache_data(ttl=300)
 def fetch_nifty200_stocks():
     """Fetch NIFTY 200 stocks from NSE India"""
     try:
         nse_url = "https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20200"
         
-        # More comprehensive headers to mimic real browser
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
             'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
             'Referer': 'https://www.nseindia.com/',
-            'Sec-Fetch-Dest': 'empty',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Site': 'same-origin',
-            'Cache-Control': 'max-age=0',
-            'Upgrade-Insecure-Requests': '1'
+            'X-Requested-With': 'XMLHttpRequest'
         }
         
-        # Create a session with retry strategy
+        # Create a session to handle cookies
         session = requests.Session()
-        retry_strategy = Retry(
-            total=3,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
-        )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-        
-        # First request to get cookies
         session.headers.update(headers)
-        initial_response = session.get("https://www.nseindia.com", timeout=15)
-        time.sleep(3)  # Wait for cookies to be set
         
-        # Update headers with additional ones from the initial response
-        session.headers.update({
-            'Cookie': '; '.join([f"{c.name}={c.value}" for c in session.cookies]),
-        })
+        # First, visit the main page to get cookies
+        session.get("https://www.nseindia.com", timeout=10)
+        time.sleep(1)  # Small delay to ensure cookies are set
         
-        # Second request for the actual data
+        # Now fetch the NIFTY 200 data
         response = session.get(nse_url, timeout=15)
         
         if response.status_code == 200:
@@ -189,62 +167,10 @@ def fetch_nifty200_stocks():
                 except (ValueError, TypeError, KeyError):
                     continue
             
-            if stocks_data:
-                return pd.DataFrame(stocks_data)
-            else:
-                st.warning("No valid stock data found in response")
-                return pd.DataFrame()
-        elif response.status_code == 403:
-            # Try alternative approach with different headers
-            st.info("Retrying with alternative method...")
-            time.sleep(2)
-            
-            # Alternative: Use a different User-Agent
-            alt_headers = {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'application/json, text/plain, */*',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Referer': 'https://www.nseindia.com/',
-                'Origin': 'https://www.nseindia.com',
-                'DNT': '1',
-            }
-            
-            session2 = requests.Session()
-            session2.headers.update(alt_headers)
-            session2.get("https://www.nseindia.com", timeout=10)
-            time.sleep(2)
-            
-            response2 = session2.get(nse_url, timeout=15)
-            if response2.status_code == 200:
-                data = response2.json()
-                stocks_data = []
-                for item in data.get('data', []):
-                    try:
-                        ltp = float(item.get('lastPrice', 0))
-                        change_percent = float(item.get('pChange', 0))
-                        stocks_data.append({
-                            'Symbol': item.get('symbol', ''),
-                            'LTP': ltp,
-                            'Change %': change_percent,
-                            'Volume': item.get('totalTradedVolume', 0)
-                        })
-                    except (ValueError, TypeError, KeyError):
-                        continue
-                if stocks_data:
-                    return pd.DataFrame(stocks_data)
-            
-            st.error(f"API returned status code: {response.status_code}")
-            return pd.DataFrame()
-        else:
-            st.error(f"API returned status code: {response.status_code}")
-            return pd.DataFrame()
+            return pd.DataFrame(stocks_data)
         
-    except requests.exceptions.Timeout:
-        st.error("Timeout while fetching NSE data. Please try again.")
         return pd.DataFrame()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Network error: {str(e)}")
-        return pd.DataFrame()
+        
     except Exception as e:
         st.error(f"Error fetching NSE data: {str(e)}")
         return pd.DataFrame()
