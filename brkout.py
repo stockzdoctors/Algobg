@@ -13,6 +13,7 @@ from telegram import Bot
 from telegram.error import TelegramError
 import threading
 import requests
+import json
 warnings.filterwarnings('ignore')
 
 # --- REMOVE ALL STREAMLIT & GITHUB BRANDING ---
@@ -52,6 +53,7 @@ st.markdown("""
         }
     </style>
     """, unsafe_allow_html=True)
+
 # Apply nest_asyncio to allow multiple asyncio runs
 nest_asyncio.apply()
 
@@ -124,24 +126,52 @@ No trading recommendations provided.
 Always consult registered experts.
 ━━━━━━━━━━━━━━━━━━"""
 
-# --- NSE NIFTY 200 FETCH FUNCTION ---
+# --- NSE NIFTY 200 FETCH FUNCTION WITH COOKIES ---
+def get_nse_cookies():
+    """Get fresh cookies from NSE"""
+    try:
+        session = requests.Session()
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
+        }
+        session.headers.update(headers)
+        response = session.get('https://www.nseindia.com', timeout=10)
+        time.sleep(2)
+        return session
+    except Exception as e:
+        st.error(f"Error getting NSE session: {str(e)}")
+        return None
+
 @st.cache_data(ttl=300)
 def fetch_nifty200_stocks():
-    """Fetch NIFTY 200 stocks from NSE India"""
+    """Fetch NIFTY 200 stocks from NSE India with proper cookies"""
     try:
+        # Get fresh session with cookies
+        session = get_nse_cookies()
+        if not session:
+            return pd.DataFrame()
+        
+        # Now fetch the API data
         nse_url = "https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20200"
         
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'application/json, text/plain, */*',
             'Accept-Language': 'en-US,en;q=0.9',
             'Referer': 'https://www.nseindia.com/',
-            'X-Requested-With': 'XMLHttpRequest'
+            'X-Requested-With': 'XMLHttpRequest',
+            'Origin': 'https://www.nseindia.com',
+            'Connection': 'keep-alive'
         }
         
-        session = requests.Session()
         session.headers.update(headers)
-        session.get("https://www.nseindia.com", timeout=10)
+        
+        # Add delay to mimic human behavior
         time.sleep(1)
         
         response = session.get(nse_url, timeout=15)
@@ -165,8 +195,13 @@ def fetch_nifty200_stocks():
                     continue
             
             df = pd.DataFrame(stocks_data)
+            
+            # Close the session
+            session.close()
+            
             return df
         
+        session.close()
         return pd.DataFrame()
         
     except Exception as e:
@@ -182,7 +217,7 @@ def send_telegram_message_sync(message):
             "text": message,
             "parse_mode": "Markdown"
         }
-        response = requests.post(url, data=payload)
+        response = requests.post(url, data=payload, timeout=10)
         if response.status_code == 200:
             return True
         else:
@@ -392,7 +427,8 @@ def fetch_data(symbol, interval, n_bars=100):
         tv = TvDatafeed()
         inv_map = {'5min': Interval.in_5_minute, '15min': Interval.in_15_minute, 'daily': Interval.in_daily}
         return tv.get_hist(symbol=symbol, exchange="NSE", interval=inv_map.get(interval, Interval.in_15_minute), n_bars=n_bars)
-    except: return None
+    except Exception as e:
+        return None
 
 def check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amount, mode, existing_signals, **strategy_params):
     all_new_signals = []
@@ -405,13 +441,16 @@ def check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amoun
         data = fetch_data(symbol, timeframe)
         if data is not None:
             signals = strategy.analyze(data, symbol, st.session_state.signal_count_per_stock)
-            if signals: all_new_signals.extend(signals)
+            if signals: 
+                all_new_signals.extend(signals)
     return all_new_signals
 
 def run_bot_cycle(selected_symbols, timeframe, strategy, risk_amount, selected_mode, strategy_params, refresh_interval, progress_bar, status_text):
     st.session_state.refresh_counter += 1
     st.session_state.last_check_time = datetime.now()
     for i in range(refresh_interval, 0, -1):
+        if not st.session_state.auto_refresh:
+            break
         progress_bar.progress((refresh_interval - i) / refresh_interval)
         status_text.text(f"🔄 Next check in {i} seconds... (Cycle: {st.session_state.refresh_counter})")
         time.sleep(1)
@@ -429,10 +468,10 @@ def main():
     # Sidebar
     with st.sidebar:
         selected_mode = st.radio("Select Mode", ["Live Trading", "Backtest (Last 2 Days)"])
-        risk_amount = st.number_input("Risk per Trade", 1000, 1000000, 10000)
+        risk_amount = st.number_input("Risk per Trade (₹)", 1000, 1000000, 10000, step=1000)
         timeframe = st.selectbox("Timeframe", ['15min', '5min'])
         strategy = st.selectbox("Strategy", ["Candle Breakout Strategy"])
-        update_interval = st.slider("Update Interval", 5, 60, 10)
+        update_interval = st.slider("Update Interval (seconds)", 5, 60, 10)
         
         st.markdown("---")
         st.subheader("📊 NIFTY 200 Screener")
@@ -498,7 +537,7 @@ def main():
                     st.success(f"✅ Found {len(st.session_state.filtered_stocks)} {st.session_state.market_type}!")
                     st.rerun()
                 else:
-                    st.error("Failed to fetch data")
+                    st.error("Failed to fetch data. Please try again.")
         
         st.markdown("---")
         
@@ -581,6 +620,7 @@ def main():
         
         st.subheader(f"📋 Trading Signals ({len(st.session_state.signals)})")
         display_signals_table(st.session_state.signals)
+        time.sleep(1)
         st.rerun()
     
     elif st.session_state.auto_refresh and selected_mode != "Live Trading":
@@ -616,6 +656,8 @@ def main():
             **Step 6:** Click **Start Bot** to begin monitoring
             
             **Strategy:** Candle Breakout - First candle of the day sets reference, any breakout generates signal
+            
+            **Note:** Make sure you have set TELEGRAM_TOKEN and TELEGRAM_CHAT_ID in Streamlit secrets for alerts
             """)
 
 if __name__ == "__main__":
