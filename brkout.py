@@ -13,6 +13,7 @@ from telegram import Bot
 from telegram.error import TelegramError
 import threading
 import requests
+import json
 warnings.filterwarnings('ignore')
 
 # --- REMOVE ALL STREAMLIT & GITHUB BRANDING ---
@@ -124,27 +125,52 @@ No trading recommendations provided.
 Always consult registered experts.
 ━━━━━━━━━━━━━━━━━━"""
 
-# --- NSE NIFTY 200 FETCH FUNCTION ---
+# --- IMPROVED NSE NIFTY 200 FETCH FUNCTION ---
 @st.cache_data(ttl=300)
 def fetch_nifty200_stocks():
-    """Fetch NIFTY 200 stocks from NSE India"""
+    """Fetch NIFTY 200 stocks from NSE India with improved headers"""
     try:
-        nse_url = "https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20200"
+        # Create a session with proper headers
+        session = requests.Session()
         
+        # Initial headers
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
+        }
+        
+        session.headers.update(headers)
+        
+        # First, visit the main page to get cookies
+        main_response = session.get("https://www.nseindia.com", timeout=15)
+        time.sleep(2)  # Wait for cookies to set
+        
+        # Now fetch the API data
+        api_url = "https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20200"
+        
+        # Update headers for API request
+        api_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'application/json, text/plain, */*',
             'Accept-Language': 'en-US,en;q=0.9',
             'Referer': 'https://www.nseindia.com/',
-            'X-Requested-With': 'XMLHttpRequest'
+            'X-Requested-With': 'XMLHttpRequest',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin',
         }
         
-        session = requests.Session()
-        session.headers.update(headers)
-        session.get("https://www.nseindia.com", timeout=10)
-        time.sleep(1)
-        
-        response = session.get(nse_url, timeout=15)
+        session.headers.update(api_headers)
+        response = session.get(api_url, timeout=15)
         
         if response.status_code == 200:
             data = response.json()
@@ -172,6 +198,43 @@ def fetch_nifty200_stocks():
     except Exception as e:
         st.error(f"Error fetching NSE data: {str(e)}")
         return pd.DataFrame()
+
+# Alternative method using nsetools if available
+def fetch_nifty200_alternative():
+    """Alternative method to fetch NIFTY 200 stocks"""
+    try:
+        # Try to get from a different endpoint
+        url = "https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%2050"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json',
+        }
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            return pd.DataFrame(response.json().get('data', []))
+        return pd.DataFrame()
+    except:
+        return pd.DataFrame()
+
+# Predefined NIFTY 200 stocks list (fallback if API fails)
+NIFTY_200_FALLBACK = [
+    "RELIANCE", "TCS", "HDFCBANK", "INFY", "HINDUNILVR", "ICICIBANK", "ITC", 
+    "SBIN", "BHARTIARTL", "KOTAKBANK", "BAJFINANCE", "LT", "AXISBANK", "HCLTECH",
+    "WIPRO", "SUNPHARMA", "MARUTI", "TITAN", "ULTRACEMCO", "ASIANPAINT", "ONGC",
+    "NTPC", "POWERGRID", "ADANIPORTS", "M&M", "BAJAJFINSV", "NESTLE", "JSWSTEEL",
+    "TATASTEEL", "HDFC", "TECHM", "INDUSINDBK", "GRASIM", "DRREDDY", "BPCL", 
+    "DIVISLAB", "HDFCLIFE", "SBILIFE", "BRITANNIA", "CIPLA", "SHREECEM", "HEROMOTOCO",
+    "EICHERMOT", "BAJAJ-AUTO", "COALINDIA", "UPL", "TATAMOTORS", "HINDALCO",
+    "ADANIGREEN", "ADANIENT", "VEDL", "IOC", "GAIL", "MCDOWELL-N", "PIDILITIND",
+    "BERGEPAINT", "DABUR", "MARICO", "HAVELLS", "VOLTAS", "AMBUJACEM", "ACC",
+    "DLF", "GODREJCP", "BAYERCROP", "TORNTPHARM", "LUPIN", "AUROPHARMA", "BIOCON",
+    "CADILAHC", "ALKEM", "GLENMARK", "APOLLOHOSP", "FORTIS", "MAXHEALTH", "METROPOLIS",
+    "COFORGE", "MINDTREE", "MPHASIS", "LTI", "TECHM", "PERSISTENT", "BSOFT",
+    "BANKBARODA", "PNB", "CANBK", "UNIONBANK", "IDFCFIRSTB", "FEDERALBNK", "RBLBANK",
+    "YESBANK", "BANDHANBNK", "SRTRANSFIN", "CHOLAFIN", "MANAPPURAM", "PEL", "BAJAJHLDNG"
+]
 
 def send_telegram_message_sync(message):
     """Send Telegram message using simple HTTP Request (More stable for Cloud)"""
@@ -465,15 +528,29 @@ def main():
             min_ltp = st.number_input("Min LTP (₹)", 0, 10000, 500, 100)
             max_ltp = st.number_input("Max LTP (₹)", 0, 50000, 3000, 100)
         
+        # Option to use fallback data if API fails
+        use_fallback = st.checkbox("Use Fallback Stock List (if API fails)", value=True)
+        
         if st.button("🚀 GET NIFTY 200 DATA", type="primary", use_container_width=True):
             with st.spinner(f"Fetching {st.session_state.market_type} from NSE..."):
                 nifty_df = fetch_nifty200_stocks()
+                
+                # If API fails and fallback is enabled, use predefined list
+                if nifty_df.empty and use_fallback:
+                    st.warning("API fetch failed. Using fallback stock list without live prices...")
+                    # Create a dataframe with fallback symbols (without live prices)
+                    fallback_data = []
+                    for symbol in NIFTY_200_FALLBACK[:100]:  # Limit to 100 stocks
+                        fallback_data.append({
+                            'Symbol': symbol,
+                            'LTP': 0,
+                            'Change %': 0,
+                            'Volume': 0
+                        })
+                    nifty_df = pd.DataFrame(fallback_data)
+                    st.info(f"Using fallback list with {len(nifty_df)} stocks. Note: Prices are not live.")
+                
                 if not nifty_df.empty:
-                    # Debug info
-                    st.write(f"Total stocks fetched: {len(nifty_df)}")
-                    st.write(f"Market Type: {st.session_state.market_type}")
-                    st.write(f"Change range: {min_change} to {max_change}")
-                    
                     # Apply filters based on Gainers or Losers
                     if st.session_state.market_type == "Gainers":
                         filtered = nifty_df[
@@ -484,7 +561,6 @@ def main():
                         ]
                         filtered = filtered.sort_values('Change %', ascending=False)
                     else:  # Losers
-                        # For losers, we want stocks with negative change %
                         filtered = nifty_df[
                             (nifty_df['Change %'] <= min_change) & 
                             (nifty_df['Change %'] >= max_change) & 
@@ -495,10 +571,14 @@ def main():
                     
                     st.session_state.filtered_stocks = filtered['Symbol'].tolist()
                     st.session_state.filtered_df = filtered
-                    st.success(f"✅ Found {len(st.session_state.filtered_stocks)} {st.session_state.market_type}!")
+                    
+                    if len(filtered) > 0:
+                        st.success(f"✅ Found {len(st.session_state.filtered_stocks)} {st.session_state.market_type}!")
+                    else:
+                        st.warning(f"No stocks found matching the criteria. Try adjusting the filters.")
                     st.rerun()
                 else:
-                    st.error("Failed to fetch data")
+                    st.error("Failed to fetch data. Please check your internet connection or try again later.")
         
         st.markdown("---")
         
@@ -532,27 +612,35 @@ def main():
         else:
             st.subheader(f"📉 NIFTY 200 {st.session_state.market_type}")
         
-        # Create metrics row
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric(f"Total {st.session_state.market_type}", len(st.session_state.filtered_df))
-        with col2:
-            avg_change = st.session_state.filtered_df['Change %'].mean()
-            st.metric("Avg Change %", f"{avg_change:+.2f}%")
-        with col3:
-            if st.session_state.market_type == "Gainers":
-                max_change_val = st.session_state.filtered_df['Change %'].max()
-            else:
-                max_change_val = st.session_state.filtered_df['Change %'].min()
-            st.metric(f"Top {st.session_state.market_type}", f"{max_change_val:+.2f}%")
-        with col4:
-            st.metric("Avg LTP", f"₹{st.session_state.filtered_df['LTP'].mean():,.2f}")
+        # Check if we have live data or fallback
+        if st.session_state.filtered_df['LTP'].iloc[0] == 0:
+            st.warning("⚠️ Using fallback stock list. Live prices are not available. Please check your connection for live data.")
+        
+        # Create metrics row (only if we have valid data)
+        if st.session_state.filtered_df['LTP'].iloc[0] > 0:
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric(f"Total {st.session_state.market_type}", len(st.session_state.filtered_df))
+            with col2:
+                avg_change = st.session_state.filtered_df['Change %'].mean()
+                st.metric("Avg Change %", f"{avg_change:+.2f}%")
+            with col3:
+                if st.session_state.market_type == "Gainers":
+                    max_change_val = st.session_state.filtered_df['Change %'].max()
+                else:
+                    max_change_val = st.session_state.filtered_df['Change %'].min()
+                st.metric(f"Top {st.session_state.market_type}", f"{max_change_val:+.2f}%")
+            with col4:
+                st.metric("Avg LTP", f"₹{st.session_state.filtered_df['LTP'].mean():,.2f}")
         
         # Display the table
         display_df = st.session_state.filtered_df.copy()
-        display_df['LTP'] = display_df['LTP'].apply(lambda x: f"₹{x:,.2f}")
-        display_df['Change %'] = display_df['Change %'].apply(lambda x: f"{x:+.2f}%")
-        display_df['Volume'] = display_df['Volume'].apply(lambda x: f"{int(x):,}")
+        if display_df['LTP'].iloc[0] > 0:
+            display_df['LTP'] = display_df['LTP'].apply(lambda x: f"₹{x:,.2f}")
+        else:
+            display_df['LTP'] = "N/A"
+        display_df['Change %'] = display_df['Change %'].apply(lambda x: f"{x:+.2f}%" if x != 0 else "N/A")
+        display_df['Volume'] = display_df['Volume'].apply(lambda x: f"{int(x):,}" if x > 0 else "N/A")
         
         st.dataframe(display_df, use_container_width=True, height=300)
         st.markdown("---")
@@ -616,6 +704,8 @@ def main():
             **Step 6:** Click **Start Bot** to begin monitoring
             
             **Strategy:** Candle Breakout - First candle of the day sets reference, any breakout generates signal
+            
+            **Note:** If API fails, check "Use Fallback Stock List" to get stock symbols without live prices
             """)
 
 if __name__ == "__main__":
