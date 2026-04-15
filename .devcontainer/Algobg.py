@@ -107,6 +107,9 @@ if 'filtered_df' not in st.session_state:
     st.session_state.filtered_df = pd.DataFrame()
 if 'use_filtered' not in st.session_state:
     st.session_state.use_filtered = False
+# NEW: Store bot start time to ignore earlier breakouts
+if 'bot_start_time' not in st.session_state:
+    st.session_state.bot_start_time = None
 
 # Stock symbols - Complete NIFTY 200 List (200+ stocks)
 SYMBOLS = [
@@ -325,7 +328,7 @@ class CandleBreakoutStrategy:
         self.mode = mode
         self.name = "Candle Breakout Strategy"
         
-    def analyze(self, df, symbol, date_tracker=None):
+    def analyze(self, df, symbol, date_tracker=None, bot_start_time=None):
         if df is None or len(df) < 2:
             return None
             
@@ -354,6 +357,12 @@ class CandleBreakoutStrategy:
         # Check every candle from the 2nd candle onwards to find a breakout
         for i in range(1, len(today_df)):
             current_candle = today_df.iloc[i]
+            candle_time = today_df.index[i]
+            
+            # NEW: Skip candles that occurred before bot started
+            if bot_start_time is not None and candle_time <= bot_start_time:
+                continue
+            
             current_high = round_to_2_decimals(current_candle['high'])
             current_low = round_to_2_decimals(current_candle['low'])
             
@@ -365,8 +374,8 @@ class CandleBreakoutStrategy:
                 if risk > 0:
                     quantity = int(self.risk_amount / risk)
                     signal = {
-                        'DATE': date_str, 'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'),
-                        'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 'SYMBOL': symbol,
+                        'DATE': date_str, 'ENTRY_TIME': candle_time.strftime('%H:%M:%S'),
+                        'BREAKOUT_CANDLE': candle_time.strftime('%H:%M'), 'SYMBOL': symbol,
                         'SIGNAL': 'BUY', 'ENTRY': entry, 'QUANTITY': quantity,
                         'STOPLOSS': stop_loss, 'T1': round_to_2_decimals(entry + risk),
                         'T2': round_to_2_decimals(entry + risk * 2), 'T3': round_to_2_decimals(entry + risk * 3),
@@ -384,8 +393,8 @@ class CandleBreakoutStrategy:
                 if risk > 0:
                     quantity = int(self.risk_amount / risk)
                     signal = {
-                        'DATE': date_str, 'ENTRY_TIME': today_df.index[i].strftime('%H:%M:%S'),
-                        'BREAKOUT_CANDLE': today_df.index[i].strftime('%H:%M'), 'SYMBOL': symbol,
+                        'DATE': date_str, 'ENTRY_TIME': candle_time.strftime('%H:%M:%S'),
+                        'BREAKOUT_CANDLE': candle_time.strftime('%H:%M'), 'SYMBOL': symbol,
                         'SIGNAL': 'SELL', 'ENTRY': entry, 'QUANTITY': quantity,
                         'STOPLOSS': stop_loss, 'T1': round_to_2_decimals(entry - risk),
                         'T2': round_to_2_decimals(entry - risk * 2), 'T3': round_to_2_decimals(entry - risk * 3),
@@ -423,10 +432,14 @@ def check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amoun
     else:
         strategy = CandleBreakoutStrategy(timeframe, risk_amount, mode)
     
+    # NEW: Get bot start time from session state
+    bot_start_time = st.session_state.bot_start_time
+    
     for symbol in selected_symbols:
         data = fetch_data(symbol, timeframe)
         if data is not None:
-            signals = strategy.analyze(data, symbol, st.session_state.signal_count_per_stock)
+            # Pass bot_start_time to analyze
+            signals = strategy.analyze(data, symbol, st.session_state.signal_count_per_stock, bot_start_time)
             if signals: 
                 all_new_signals.extend(signals)
         time.sleep(0.3)  # Rate limiting
@@ -499,10 +512,13 @@ def main():
                 st.session_state.auto_refresh = True
                 st.session_state.signals = []
                 st.session_state.refresh_counter = 0
+                # NEW: Record the time when bot starts
+                st.session_state.bot_start_time = datetime.now()
                 st.rerun()
         else:
             if st.button("⏹ Stop Bot", type="secondary", use_container_width=True):
                 st.session_state.auto_refresh = False
+                # Optionally clear bot_start_time, but not necessary
                 st.rerun()
     
     # --- MAIN PAGE CONTENT ---
@@ -545,7 +561,7 @@ def main():
         
         # Show active trading symbols
         trading_symbols = st.session_state.filtered_stocks if (st.session_state.use_filtered and st.session_state.filtered_stocks) else SYMBOLS
-        st.info(f"🎯 Monitoring {len(trading_symbols)} stocks for signals")
+        st.info(f"🎯 Monitoring {len(trading_symbols)} stocks for signals (only breakouts after bot start)")
         
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -590,6 +606,8 @@ def main():
             **Strategy:** Candle Breakout - First candle of the day sets reference, any breakout generates signal
             
             **Data Source:** TVDatafeed (Real-time NSE Data)
+            
+            **Note:** Only breakouts that happen AFTER you click "Start Bot" will be captured.
             """)
 
 if __name__ == "__main__":
