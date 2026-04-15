@@ -108,7 +108,7 @@ if 'filtered_df' not in st.session_state:
 if 'use_filtered' not in st.session_state:
     st.session_state.use_filtered = False
 
-# Stock symbols - Updated with 200+ stocks (ONLY CHANGE)
+# Stock symbols - Updated with 200+ stocks
 SYMBOLS = [
     "GROWW", "HDFCBANK", "ICICIBANK", "VEDL", "BSE", "TCS", "INFY", "LT", 
     "HINDALCO", "MCX", "ETERNAL", "RELIANCE", "SBIN", "ADANIPOWER", "BHARTIARTL", 
@@ -151,52 +151,39 @@ No trading recommendations provided.
 Always consult registered experts.
 ━━━━━━━━━━━━━━━━━━"""
 
-# --- NSE NIFTY 200 FETCH FUNCTION ---
+# --- FETCH DATA FROM TVDATAFEED (REPLACED NSE) ---
 @st.cache_data(ttl=300)
 def fetch_nifty200_stocks():
-    """Fetch NIFTY 200 stocks from NSE India"""
+    """Fetch stock data from TVDatafeed for all SYMBOLS"""
     try:
-        nse_url = "https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20200"
+        tv = TvDatafeed()
+        stocks_data = []
         
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': 'https://www.nseindia.com/',
-            'X-Requested-With': 'XMLHttpRequest'
-        }
-        
-        session = requests.Session()
-        session.headers.update(headers)
-        session.get("https://www.nseindia.com", timeout=10)
-        time.sleep(1)
-        
-        response = session.get(nse_url, timeout=15)
-        
-        if response.status_code == 200:
-            data = response.json()
-            stocks_data = []
-            
-            for item in data.get('data', []):
-                try:
-                    ltp = float(item.get('lastPrice', 0))
-                    change_percent = float(item.get('pChange', 0))
+        # Fetch daily data for each symbol to get LTP and change %
+        for symbol in SYMBOLS:
+            try:
+                data = tv.get_hist(symbol=symbol, exchange="NSE", interval=Interval.in_daily, n_bars=2)
+                if data is not None and len(data) >= 2:
+                    current_price = round(float(data['close'].iloc[-1]), 2)
+                    prev_close = round(float(data['close'].iloc[-2]), 2)
+                    change_percent = round(((current_price - prev_close) / prev_close) * 100, 2)
                     
                     stocks_data.append({
-                        'Symbol': item.get('symbol', ''),
-                        'LTP': ltp,
+                        'Symbol': symbol,
+                        'LTP': current_price,
                         'Change %': change_percent,
-                        'Volume': item.get('totalTradedVolume', 0)
+                        'Volume': int(data['volume'].iloc[-1]) if 'volume' in data else 0
                     })
-                except (ValueError, TypeError, KeyError):
-                    continue
-            
-            return pd.DataFrame(stocks_data)
+                time.sleep(0.3)  # Rate limiting
+            except:
+                continue
         
+        if stocks_data:
+            return pd.DataFrame(stocks_data)
         return pd.DataFrame()
         
     except Exception as e:
-        st.error(f"Error fetching NSE data: {str(e)}")
+        st.error(f"Error fetching data from TVDatafeed: {str(e)}")
         return pd.DataFrame()
 
 def send_telegram_message_sync(message):
@@ -481,7 +468,7 @@ def main():
         max_ltp = st.number_input("Max LTP (₹)", 0, 50000, 3000, 100)
         
         if st.button("🚀 GET NIFTY 200 DATA", type="primary", use_container_width=True):
-            with st.spinner("Fetching NIFTY 200 stocks from NSE..."):
+            with st.spinner("Fetching NIFTY 200 stocks from TVDatafeed..."):
                 nifty_df = fetch_nifty200_stocks()
                 if not nifty_df.empty:
                     filtered = nifty_df[
