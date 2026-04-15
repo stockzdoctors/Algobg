@@ -101,14 +101,8 @@ if 'bot_thread' not in st.session_state:
     st.session_state.bot_thread = None
 if 'stop_bot' not in st.session_state:
     st.session_state.stop_bot = False
-if 'filtered_stocks' not in st.session_state:
-    st.session_state.filtered_stocks = []
-if 'filtered_df' not in st.session_state:
-    st.session_state.filtered_df = pd.DataFrame()
-if 'use_filtered' not in st.session_state:
-    st.session_state.use_filtered = False
 
-# Stock symbols - Complete NIFTY 200 List (200+ stocks)
+# Stock symbols - Updated with 200+ stocks (ONLY CHANGE MADE HERE)
 SYMBOLS = [
     "GROWW", "HDFCBANK", "ICICIBANK", "VEDL", "BSE", "TCS", "INFY", "LT", 
     "HINDALCO", "MCX", "ETERNAL", "RELIANCE", "SBIN", "ADANIPOWER", "BHARTIARTL", 
@@ -150,39 +144,6 @@ We are NOT SEBI registered advisors.
 No trading recommendations provided.
 Always consult registered experts.
 ━━━━━━━━━━━━━━━━━━"""
-
-# --- FETCH STOCK DATA FROM TVDATAFEED ---
-@st.cache_data(ttl=300)
-def fetch_stocks_data_from_tv(symbols_list):
-    """Fetch current stock data (LTP, Change %) from TVDatafeed for multiple symbols"""
-    stocks_data = []
-    tv = TvDatafeed()
-    
-    with st.spinner(f"Fetching data for {len(symbols_list)} stocks..."):
-        for symbol in symbols_list:
-            try:
-                # Fetch daily data to get current price and change
-                data = tv.get_hist(symbol=symbol, exchange="NSE", interval=Interval.in_daily, n_bars=2)
-                if data is not None and len(data) >= 2:
-                    current_price = round(float(data['close'].iloc[-1]), 2)
-                    prev_close = round(float(data['close'].iloc[-2]), 2)
-                    change_percent = round(((current_price - prev_close) / prev_close) * 100, 2)
-                    
-                    stocks_data.append({
-                        'Symbol': symbol,
-                        'LTP': current_price,
-                        'Change %': change_percent,
-                        'Volume': int(data['volume'].iloc[-1]) if 'volume' in data else 0,
-                        'Open': round(float(data['open'].iloc[-1]), 2),
-                        'High': round(float(data['high'].iloc[-1]), 2),
-                        'Low': round(float(data['low'].iloc[-1]), 2),
-                        'Prev Close': prev_close
-                    })
-                time.sleep(0.3)  # Rate limiting
-            except:
-                continue
-    
-    return pd.DataFrame(stocks_data)
 
 def send_telegram_message_sync(message):
     """Send Telegram message using simple HTTP Request (More stable for Cloud)"""
@@ -317,7 +278,7 @@ def round_to_2_decimals(value):
     return round(float(value), 2)
 
 class CandleBreakoutStrategy:
-    """Strategy: First candle reference, any future candle breakout, one signal per day"""
+    """Strategy: 9:15 reference, any future candle breakout, one signal per day"""
     
     def __init__(self, timeframe='15min', risk_amount=10000, mode="Live Trading"):
         self.timeframe = timeframe
@@ -339,11 +300,12 @@ class CandleBreakoutStrategy:
         if len(today_df) < 1:
             return None
 
-        # Find the VERY FIRST candle of today
+        # --- PERSISTENT LOGIC: Find the VERY FIRST candle of today ---
         reference_candle = today_df.iloc[0]
+        reference_idx = 0
         
-        high_ref = round_to_2_decimals(reference_candle['high'])
-        low_ref = round_to_2_decimals(reference_candle['low'])
+        high_915 = round_to_2_decimals(reference_candle['high'])
+        low_915 = round_to_2_decimals(reference_candle['low'])
         date_str = today_date.strftime('%Y-%m-%d')
         
         if date_tracker is not None:
@@ -356,11 +318,12 @@ class CandleBreakoutStrategy:
             current_candle = today_df.iloc[i]
             current_high = round_to_2_decimals(current_candle['high'])
             current_low = round_to_2_decimals(current_candle['low'])
+            current_close = round_to_2_decimals(current_candle['close'])
             
             # BUY Condition
-            if current_high > high_ref:
-                entry = high_ref
-                stop_loss = low_ref
+            if current_high > high_915:
+                entry = high_915
+                stop_loss = low_915
                 risk = round_to_2_decimals(entry - stop_loss)
                 if risk > 0:
                     quantity = int(self.risk_amount / risk)
@@ -377,9 +340,9 @@ class CandleBreakoutStrategy:
                     break
             
             # SELL Condition
-            elif current_low < low_ref:
-                entry = low_ref
-                stop_loss = high_ref
+            elif current_low < low_915:
+                entry = low_915
+                stop_loss = high_915
                 risk = round_to_2_decimals(stop_loss - entry)
                 if risk > 0:
                     quantity = int(self.risk_amount / risk)
@@ -413,8 +376,7 @@ def fetch_data(symbol, interval, n_bars=100):
         tv = TvDatafeed()
         inv_map = {'5min': Interval.in_5_minute, '15min': Interval.in_15_minute, 'daily': Interval.in_daily}
         return tv.get_hist(symbol=symbol, exchange="NSE", interval=inv_map.get(interval, Interval.in_15_minute), n_bars=n_bars)
-    except: 
-        return None
+    except: return None
 
 def check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amount, mode, existing_signals, **strategy_params):
     all_new_signals = []
@@ -427,9 +389,7 @@ def check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amoun
         data = fetch_data(symbol, timeframe)
         if data is not None:
             signals = strategy.analyze(data, symbol, st.session_state.signal_count_per_stock)
-            if signals: 
-                all_new_signals.extend(signals)
-        time.sleep(0.3)  # Rate limiting
+            if signals: all_new_signals.extend(signals)
     return all_new_signals
 
 def run_bot_cycle(selected_symbols, timeframe, strategy, risk_amount, selected_mode, strategy_params, refresh_interval, progress_bar, status_text):
@@ -449,50 +409,12 @@ def display_signals_table(signals, title="Signals"):
 def main():
     st.title("📈 Algorithmic Trading System")
     st.markdown("---")
-    
-    # Sidebar
     with st.sidebar:
         selected_mode = st.radio("Select Mode", ["Live Trading", "Backtest (Last 2 Days)"])
         risk_amount = st.number_input("Risk per Trade", 1000, 1000000, 10000)
         timeframe = st.selectbox("Timeframe", ['15min', '5min'])
         strategy = st.selectbox("Strategy", ["Candle Breakout Strategy"])
         update_interval = st.slider("Update Interval", 5, 60, 10)
-        
-        st.markdown("---")
-        st.subheader("📊 Stock Filter (TVDatafeed)")
-        
-        min_change = st.number_input("Min Change %", 0.0, 100.0, 2.0, 0.5)
-        max_change = st.number_input("Max Change %", 0.0, 100.0, 5.0, 0.5)
-        min_ltp = st.number_input("Min LTP (₹)", 0, 10000, 500, 100)
-        max_ltp = st.number_input("Max LTP (₹)", 0, 50000, 3000, 100)
-        
-        if st.button("🚀 GET STOCK DATA", type="primary", use_container_width=True):
-            with st.spinner("Fetching stock data from TVDatafeed..."):
-                stocks_df = fetch_stocks_data_from_tv(SYMBOLS)
-                if not stocks_df.empty:
-                    filtered = stocks_df[
-                        (stocks_df['Change %'] >= min_change) & 
-                        (stocks_df['Change %'] <= max_change) & 
-                        (stocks_df['LTP'] > min_ltp) & 
-                        (stocks_df['LTP'] < max_ltp)
-                    ]
-                    st.session_state.filtered_stocks = filtered['Symbol'].tolist()
-                    st.session_state.filtered_df = filtered
-                    st.success(f"✅ Found {len(st.session_state.filtered_stocks)} stocks!")
-                    st.rerun()
-                else:
-                    st.error("Failed to fetch data")
-        
-        st.markdown("---")
-        
-        # Option to use filtered stocks (checkbox in sidebar)
-        if st.session_state.filtered_stocks:
-            st.session_state.use_filtered = st.checkbox("📌 Use Filtered Stocks for Trading", value=st.session_state.use_filtered)
-            
-            if st.session_state.use_filtered:
-                st.info(f"✅ Trading with {len(st.session_state.filtered_stocks)} filtered stocks")
-            else:
-                st.info(f"📊 Trading with {len(SYMBOLS)} default stocks")
         
         if not st.session_state.auto_refresh:
             if st.button("🚀 Start Bot", type="primary", use_container_width=True):
@@ -504,93 +426,24 @@ def main():
             if st.button("⏹ Stop Bot", type="secondary", use_container_width=True):
                 st.session_state.auto_refresh = False
                 st.rerun()
-    
-    # --- MAIN PAGE CONTENT ---
-    
-    # Display Filtered Stocks on Main Page
-    if st.session_state.filtered_df is not None and not st.session_state.filtered_df.empty:
-        st.subheader("📊 Filtered Stocks (Data from TVDatafeed)")
-        st.markdown(f"**Criteria:** Change % {min_change}% to {max_change}% | LTP ₹{min_ltp} to ₹{max_ltp}")
-        
-        # Create metrics row
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total Stocks Found", len(st.session_state.filtered_df))
-        with col2:
-            st.metric("Avg Change %", f"{st.session_state.filtered_df['Change %'].mean():.2f}%")
-        with col3:
-            st.metric("Max Change %", f"{st.session_state.filtered_df['Change %'].max():.2f}%")
-        with col4:
-            st.metric("Avg LTP", f"₹{st.session_state.filtered_df['LTP'].mean():,.2f}")
-        
-        # Display the table with OHLC data
-        display_df = st.session_state.filtered_df.copy()
-        display_df['LTP'] = display_df['LTP'].apply(lambda x: f"₹{x:,.2f}")
-        display_df['Change %'] = display_df['Change %'].apply(lambda x: f"{x:+.2f}%")
-        display_df['Volume'] = display_df['Volume'].apply(lambda x: f"{int(x):,}")
-        display_df['Open'] = display_df['Open'].apply(lambda x: f"₹{x:,.2f}")
-        display_df['High'] = display_df['High'].apply(lambda x: f"₹{x:,.2f}")
-        display_df['Low'] = display_df['Low'].apply(lambda x: f"₹{x:,.2f}")
-        
-        st.dataframe(display_df[['Symbol', 'LTP', 'Change %', 'Open', 'High', 'Low', 'Volume']], 
-                    use_container_width=True, height=300)
-        st.markdown("---")
-    
-    # Bot Status and Signals
+
     if st.session_state.auto_refresh and selected_mode == "Live Trading":
         col1, col2, col3 = st.columns(3)
-        col1.metric("Bot Status", "🟢 RUNNING")
-        col2.metric("Cycle", st.session_state.refresh_counter)
-        col3.metric("Time", datetime.now().strftime('%H:%M:%S'))
-        
-        # Show active trading symbols
-        trading_symbols = st.session_state.filtered_stocks if (st.session_state.use_filtered and st.session_state.filtered_stocks) else SYMBOLS
-        st.info(f"🎯 Monitoring {len(trading_symbols)} stocks for signals")
+        col1.metric("Cycle", st.session_state.refresh_counter)
+        col2.metric("Time", datetime.now().strftime('%H:%M:%S'))
+        col3.metric("Signals", len(st.session_state.signals))
         
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        new_sigs = run_bot_cycle(trading_symbols, timeframe, strategy, risk_amount, selected_mode, {}, update_interval, progress_bar, status_text)
+        new_sigs = run_bot_cycle(SYMBOLS, timeframe, strategy, risk_amount, selected_mode, {}, update_interval, progress_bar, status_text)
         if new_sigs:
             st.session_state.signals.extend(new_sigs)
             send_bulk_telegram_alerts(new_sigs)
             st.balloons()
-            st.success(f"🎯 {len(new_sigs)} New Signals Generated!")
-        
-        st.subheader(f"📋 Trading Signals ({len(st.session_state.signals)})")
+            
         display_signals_table(st.session_state.signals)
         st.rerun()
-    
-    elif st.session_state.auto_refresh and selected_mode != "Live Trading":
-        st.warning("Backtest mode is not implemented yet. Please use Live Trading mode.")
-    
-    else:
-        # Display when bot is not running
-        if st.session_state.filtered_stocks:
-            st.info("✅ Click **Start Bot** to begin monitoring these stocks for trading signals")
-        else:
-            st.info("👈 **Get Started:** Click 'GET STOCK DATA' in sidebar to fetch stock data, then click 'Start Bot'")
-        
-        # Show existing signals if any
-        if st.session_state.signals:
-            st.subheader(f"📋 Previous Signals ({len(st.session_state.signals)})")
-            display_signals_table(st.session_state.signals)
-        
-        # Instructions
-        with st.expander("ℹ️ How to Use", expanded=False):
-            st.markdown("""
-            **Step 1:** Set filter criteria in sidebar (Change % and LTP)
-            
-            **Step 2:** Click **GET STOCK DATA** to fetch live data from TVDatafeed
-            
-            **Step 3:** Check **Use Filtered Stocks for Trading** (optional)
-            
-            **Step 4:** Click **Start Bot** to begin monitoring
-            
-            **Strategy:** Candle Breakout - First candle of the day sets reference, any breakout generates signal
-            
-            **Data Source:** TVDatafeed (Real-time NSE Data)
-            """)
 
 if __name__ == "__main__":
     main()
