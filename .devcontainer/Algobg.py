@@ -411,24 +411,28 @@ class RSIBreakoutStrategy:
 def fetch_data(symbol, interval, n_bars=100):
     try:
         tv = TvDatafeed()
-        inv_map = {'5min': Interval.in_5_minute, '15min': Interval.in_15_minute, 'daily': Interval.in_daily}
+        # Added '1min' to the mapping
+        inv_map = {'1min': Interval.in_1_minute, '5min': Interval.in_5_minute, '15min': Interval.in_15_minute, 'daily': Interval.in_daily}
         return tv.get_hist(symbol=symbol, exchange="NSE", interval=inv_map.get(interval, Interval.in_15_minute), n_bars=n_bars)
     except: 
         return None
 
-# ------------------------- NEW: Monitor active trades for target/SL hits -------------------------
+# ------------------------- FIXED: Monitor active trades for target/SL hits -------------------------
 def monitor_active_trades():
     """Check all active trades for target or stop-loss hits and send alerts"""
-    tv = TvDatafeed()
     trades_to_remove = []
     
     for trade in st.session_state.active_trades:
         symbol = trade['SYMBOL']
         try:
-            # Fetch latest price (1-min interval for real-time)
-            data = tv.get_hist(symbol=symbol, exchange="NSE", interval=Interval.in_1_minute, n_bars=1)
+            # Use the same fetch_data function with 1-minute interval
+            data = fetch_data(symbol, '1min', n_bars=1)
+            if data is None or data.empty:
+                # Try with 5min as fallback
+                data = fetch_data(symbol, '5min', n_bars=1)
             if data is None or data.empty:
                 continue
+                
             current_price = round(float(data['close'].iloc[-1]), 2)
             
             if trade['SIGNAL'] == 'BUY':
@@ -439,6 +443,7 @@ def monitor_active_trades():
                     send_telegram_alert(trade, "STOPLOSS")
                     trade['STOPLOSS_HIT'] = True
                     trades_to_remove.append(trade)
+                    st.success(f"🛑 Stop Loss Hit for {symbol} at ₹{current_price}")
                     continue
                 
                 # Check Targets
@@ -447,12 +452,14 @@ def monitor_active_trades():
                     trade['PNL'] = pnl
                     send_telegram_alert(trade, "TARGET1")
                     trade['T1_HIT'] = True
+                    st.success(f"🎯 T1 Hit for {symbol} at ₹{current_price}")
                 
                 if not trade.get('T2_HIT', False) and current_price >= trade['T2']:
                     pnl = (trade['T2'] - trade['ENTRY']) * trade['QUANTITY']
                     trade['PNL'] = pnl
                     send_telegram_alert(trade, "TARGET2")
                     trade['T2_HIT'] = True
+                    st.success(f"🎯 T2 Hit for {symbol} at ₹{current_price}")
                 
                 if not trade.get('T3_HIT', False) and current_price >= trade['T3']:
                     pnl = (trade['T3'] - trade['ENTRY']) * trade['QUANTITY']
@@ -460,6 +467,7 @@ def monitor_active_trades():
                     send_telegram_alert(trade, "TARGET3")
                     trade['T3_HIT'] = True
                     trades_to_remove.append(trade)
+                    st.success(f"🎯 T3 Hit for {symbol} at ₹{current_price}")
             
             else:  # SELL trade
                 if not trade.get('STOPLOSS_HIT', False) and current_price >= trade['STOPLOSS']:
@@ -468,6 +476,7 @@ def monitor_active_trades():
                     send_telegram_alert(trade, "STOPLOSS")
                     trade['STOPLOSS_HIT'] = True
                     trades_to_remove.append(trade)
+                    st.success(f"🛑 Stop Loss Hit for {symbol} at ₹{current_price}")
                     continue
                 
                 if not trade.get('T1_HIT', False) and current_price <= trade['T1']:
@@ -475,12 +484,14 @@ def monitor_active_trades():
                     trade['PNL'] = pnl
                     send_telegram_alert(trade, "TARGET1")
                     trade['T1_HIT'] = True
+                    st.success(f"🎯 T1 Hit for {symbol} at ₹{current_price}")
                 
                 if not trade.get('T2_HIT', False) and current_price <= trade['T2']:
                     pnl = (trade['ENTRY'] - trade['T2']) * trade['QUANTITY']
                     trade['PNL'] = pnl
                     send_telegram_alert(trade, "TARGET2")
                     trade['T2_HIT'] = True
+                    st.success(f"🎯 T2 Hit for {symbol} at ₹{current_price}")
                 
                 if not trade.get('T3_HIT', False) and current_price <= trade['T3']:
                     pnl = (trade['ENTRY'] - trade['T3']) * trade['QUANTITY']
@@ -488,6 +499,7 @@ def monitor_active_trades():
                     send_telegram_alert(trade, "TARGET3")
                     trade['T3_HIT'] = True
                     trades_to_remove.append(trade)
+                    st.success(f"🎯 T3 Hit for {symbol} at ₹{current_price}")
                     
         except Exception as e:
             print(f"Error monitoring {symbol}: {e}")
