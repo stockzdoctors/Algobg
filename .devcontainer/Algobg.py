@@ -416,6 +416,89 @@ def fetch_data(symbol, interval, n_bars=100):
     except: 
         return None
 
+# ------------------------- NEW: Monitor active trades for target/SL hits -------------------------
+def monitor_active_trades():
+    """Check all active trades for target or stop-loss hits and send alerts"""
+    tv = TvDatafeed()
+    trades_to_remove = []
+    
+    for trade in st.session_state.active_trades:
+        symbol = trade['SYMBOL']
+        try:
+            # Fetch latest price (1-min interval for real-time)
+            data = tv.get_hist(symbol=symbol, exchange="NSE", interval=Interval.in_1_minute, n_bars=1)
+            if data is None or data.empty:
+                continue
+            current_price = round(float(data['close'].iloc[-1]), 2)
+            
+            if trade['SIGNAL'] == 'BUY':
+                # Check Stop Loss
+                if not trade.get('STOPLOSS_HIT', False) and current_price <= trade['STOPLOSS']:
+                    pnl = (trade['STOPLOSS'] - trade['ENTRY']) * trade['QUANTITY']
+                    trade['PNL'] = pnl
+                    send_telegram_alert(trade, "STOPLOSS")
+                    trade['STOPLOSS_HIT'] = True
+                    trades_to_remove.append(trade)
+                    continue
+                
+                # Check Targets
+                if not trade.get('T1_HIT', False) and current_price >= trade['T1']:
+                    pnl = (trade['T1'] - trade['ENTRY']) * trade['QUANTITY']
+                    trade['PNL'] = pnl
+                    send_telegram_alert(trade, "TARGET1")
+                    trade['T1_HIT'] = True
+                
+                if not trade.get('T2_HIT', False) and current_price >= trade['T2']:
+                    pnl = (trade['T2'] - trade['ENTRY']) * trade['QUANTITY']
+                    trade['PNL'] = pnl
+                    send_telegram_alert(trade, "TARGET2")
+                    trade['T2_HIT'] = True
+                
+                if not trade.get('T3_HIT', False) and current_price >= trade['T3']:
+                    pnl = (trade['T3'] - trade['ENTRY']) * trade['QUANTITY']
+                    trade['PNL'] = pnl
+                    send_telegram_alert(trade, "TARGET3")
+                    trade['T3_HIT'] = True
+                    trades_to_remove.append(trade)
+            
+            else:  # SELL trade
+                if not trade.get('STOPLOSS_HIT', False) and current_price >= trade['STOPLOSS']:
+                    pnl = (trade['ENTRY'] - trade['STOPLOSS']) * trade['QUANTITY']
+                    trade['PNL'] = pnl
+                    send_telegram_alert(trade, "STOPLOSS")
+                    trade['STOPLOSS_HIT'] = True
+                    trades_to_remove.append(trade)
+                    continue
+                
+                if not trade.get('T1_HIT', False) and current_price <= trade['T1']:
+                    pnl = (trade['ENTRY'] - trade['T1']) * trade['QUANTITY']
+                    trade['PNL'] = pnl
+                    send_telegram_alert(trade, "TARGET1")
+                    trade['T1_HIT'] = True
+                
+                if not trade.get('T2_HIT', False) and current_price <= trade['T2']:
+                    pnl = (trade['ENTRY'] - trade['T2']) * trade['QUANTITY']
+                    trade['PNL'] = pnl
+                    send_telegram_alert(trade, "TARGET2")
+                    trade['T2_HIT'] = True
+                
+                if not trade.get('T3_HIT', False) and current_price <= trade['T3']:
+                    pnl = (trade['ENTRY'] - trade['T3']) * trade['QUANTITY']
+                    trade['PNL'] = pnl
+                    send_telegram_alert(trade, "TARGET3")
+                    trade['T3_HIT'] = True
+                    trades_to_remove.append(trade)
+                    
+        except Exception as e:
+            print(f"Error monitoring {symbol}: {e}")
+    
+    # Move completed trades to completed_trades list
+    for trade in trades_to_remove:
+        if trade in st.session_state.active_trades:
+            st.session_state.active_trades.remove(trade)
+            st.session_state.completed_trades.append(trade)
+# ---------------------------------------------------------------------------------------------
+
 def check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amount, mode, existing_signals, **strategy_params):
     all_new_signals = []
     if strategy_name == "Candle Breakout Strategy":
@@ -428,6 +511,11 @@ def check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amoun
         if data is not None:
             signals = strategy.analyze(data, symbol, st.session_state.signal_count_per_stock)
             if signals: 
+                for signal in signals:
+                    # Add missing flag for stop loss hit
+                    signal['STOPLOSS_HIT'] = False
+                    # Add to active trades for monitoring
+                    st.session_state.active_trades.append(signal)
                 all_new_signals.extend(signals)
         time.sleep(0.3)  # Rate limiting
     return all_new_signals
@@ -435,6 +523,10 @@ def check_for_new_signals(selected_symbols, timeframe, strategy_name, risk_amoun
 def run_bot_cycle(selected_symbols, timeframe, strategy, risk_amount, selected_mode, strategy_params, refresh_interval, progress_bar, status_text):
     st.session_state.refresh_counter += 1
     st.session_state.last_check_time = datetime.now()
+    
+    # Monitor active trades first (for T1/T2/T3/SL alerts)
+    monitor_active_trades()
+    
     for i in range(refresh_interval, 0, -1):
         progress_bar.progress((refresh_interval - i) / refresh_interval)
         status_text.text(f"🔄 Next check in {i} seconds... (Cycle: {st.session_state.refresh_counter})")
